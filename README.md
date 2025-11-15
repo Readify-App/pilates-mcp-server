@@ -1,231 +1,150 @@
-# Web Scraping MCP Server
+# Pilates MCP Server
 
-Webページのスクレイピングを行うMCPサーバーです。通常のHTMLページとJavaScript/SPA/Reactサイトの両方に対応しています。
+Claude Desktop用のピラティススタジオ情報MCPサーバーです。
 
-## 機能
+## 特徴
 
-### 📄 fetch_page_content
-通常のHTMLページからコンテンツを取得します。高速で軽量です。
+- 非エンジニアでも1コマンドでインストール可能
+- Claude Desktopに自動統合
+- ピラティススタジオの情報を提供
+  - スタジオ一覧の取得
+  - スタジオ詳細情報の取得
+  - エリアでの絞り込み
+  - IDでの直接取得
 
-**特徴:**
-- シンプルなHTTPリクエスト
-- BeautifulSoupによるHTML解析
-- ヘッダー、フッター、ナビゲーションを自動除外
-- メインコンテンツの自動検出
+## インストール方法
 
-**使用例:**
-```
-「https://example.com/article のページ内容を取得して」
-```
+### macOS / Linux
 
-### 🎭 fetch_page_content_with_playwright
-JavaScript/SPA/Reactサイトからコンテンツを取得します。動的にレンダリングされるページに対応しています。
+ターミナルで以下のコマンドを実行してください:
 
-**特徴:**
-- Playwrightによる実ブラウザレンダリング
-- JavaScript実行後のコンテンツ取得
-- Shadow DOM対応
-- プライバシー同意ダイアログの自動処理
-- メール・電話番号の自動抽出
-
-**使用例:**
-```
-「https://example.com/spa-page のページ内容をPlaywrightで取得して」
-```
-
-### 🗺️ extract_site_links
-公式サイトからheader/footer/navのリンクを抽出し、仮想サイトマップを作成します。
-
-**特徴:**
-- ヘッダー、フッター、ナビゲーションからリンク抽出
-- 重複パターンの自動除去
-- 各ページの見出し（h2/h3）を自動取得
-- 同一ドメイン内のリンクのみ対象
-
-**使用例:**
-```
-「https://example.com のサイト構造を教えて」
-```
-
-### 🗺️ extract_site_links_with_playwright
-JavaScript/SPA/Reactサイトから動的にリンクを抽出します。
-
-**使用例:**
-```
-「https://example.com のサイトマップをPlaywrightで取得して」
-```
-
-## インストール
-
-### 🚀 1コマンドインストール（推奨）
-
-#### macOS / Linux
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Readify-App/scraping-mcp-server/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/Readify-App/pilates-mcp-server/main/install.sh | bash
 ```
 
-#### Windows (PowerShell)
+### Windows
+
+PowerShellで以下のコマンドを実行してください:
+
 ```powershell
-irm https://raw.githubusercontent.com/Readify-App/scraping-mcp-server/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Readify-App/pilates-mcp-server/main/install.ps1 | iex
 ```
 
-インストール後、**Claude Desktopを再起動**してください。
+## インストール後の手順
 
-### 🔧 手動インストール
+1. Claude Desktopを再起動
+2. 🔨 アイコンが表示されることを確認
+3. ピラティススタジオに関する質問を始める!
 
-<details>
-<summary>手動インストール手順を表示</summary>
+## 使用例
 
-#### 1. リポジトリをクローン
-```bash
-git clone https://github.com/Readify-App/scraping-mcp-server.git
-cd scraping-mcp-server
+インストール後、以下のように質問できます:
+
+```
+渋谷のピラティススタジオを検索して
 ```
 
-#### 2. uvで依存関係をインストール
-```bash
-uv sync
+```
+zen place pilatesの詳細を教えて
 ```
 
-#### 3. Playwrightのブラウザをインストール
-```bash
-uv run playwright install chromium
+```
+東京都のピラティススタジオを教えて
 ```
 
-#### 4. Claude Desktop設定ファイルを編集
+## 必要な環境
 
-**macOS:**
-```bash
-nano ~/Library/Application\ Support/Claude/claude_desktop_config.json
-```
+- Python 3.10以上
+- Claude Desktop
+- インターネット接続
 
-**Linux:**
-```bash
-nano ~/.config/claude-desktop/claude_desktop_config.json
-```
+## 利用可能なツール
 
-**Windows:**
-```powershell
-notepad %APPDATA%\Claude\claude_desktop_config.json
-```
+### 1. `pilates_list`
+ピラティススタジオの一覧を取得します。
 
-以下の内容を追加（`/path/to/scraping-mcp-server`は実際のパスに置き換え）:
+**パラメータ:**
+- `店舗名`: 検索したいスタジオ名（オプション）
+- `エリア`: 検索したいエリア（オプション）
+- `件数`: 取得件数（デフォルト: 20）
 
-```json
-{
-  "mcpServers": {
-    "scraping-mcp-server": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/scraping-mcp-server",
-        "run",
-        "scraping-mcp-server"
-      ]
-    }
-  }
-}
-```
+### 2. `pilates_detail`
+特定のピラティススタジオの詳細情報を取得します。
 
-#### 5. Claude Desktopを再起動
+**パラメータ:**
+- `店舗名`: スタジオ名（必須）
 
-</details>
+### 3. `pilates_by_id`
+投稿IDを指定してピラティススタジオの情報を取得します。
 
-## 使い方
+**パラメータ:**
+- `投稿ID`: スタジオのID（必須）
 
-Claude Desktopで以下のように質問してください:
+### 4. `pilates_by_area`
+エリア名でピラティススタジオを検索します。
 
-### 📄 通常のHTMLページを取得
-```
-「https://example.com/article のページ内容を取得して」
-```
-
-### 🎭 JavaScript/SPAページを取得
-```
-「https://example.com/spa-page のページ内容をPlaywrightで取得して」
-```
-
-### 🗺️ サイト構造を分析
-```
-「https://example.com のサイト構造を教えて」
-```
-
-## ツールの選択ガイド
-
-| ツール | 用途 | 例 |
-|--------|------|-----|
-| **fetch_page_content** | 静的なHTMLページ | ブログ記事、ニュースサイト、Wikipediaなど |
-| **fetch_page_content_with_playwright** | 動的なページ | React/Vue/Angular製のSPA、認証ダイアログがあるページ |
-| **extract_site_links** | 静的サイトの構造分析 | 企業サイト、公式サイトのナビゲーション |
-| **extract_site_links_with_playwright** | 動的サイトの構造分析 | SPAのナビゲーション、動的メニュー |
+**パラメータ:**
+- `エリア`: エリア名（例: 東京都葛飾区、渋谷、新宿など）（必須）
+- `件数`: 取得件数（デフォルト: 10）
 
 ## トラブルシューティング
 
-### ❌ Playwrightが動かない場合
+### MCPサーバーが表示されない場合
 
-```bash
-# ブラウザを再インストール
-uv run playwright install --force chromium
+設定ファイルを確認してください:
 
-# システムの依存関係を確認（Linux）
-uv run playwright install-deps
-```
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-### 📝 ログの確認
+### インストールに失敗する場合
 
-```bash
-# インストールディレクトリで
-tail -f debug.log
-```
-
-### 🔄 設定のリセット
-
-もう一度インストールスクリプトを実行してください:
-
-**macOS / Linux:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Readify-App/scraping-mcp-server/main/install.sh | bash
-```
-
-**Windows:**
-```powershell
-irm https://raw.githubusercontent.com/Readify-App/scraping-mcp-server/main/install.ps1 | iex
-```
-
-## 制限事項
-
-- ⚠️ PDFファイルには対応していません
-- ⚠️ ログインが必要なページには対応していません
-- ⚠️ 複数ページの同時スクレイピングには制限があります（最大5ブラウザ）
-
-## ライセンス
-
-MIT
+1. Python 3.10以上がインストールされているか確認
+2. インターネット接続を確認
+3. Claude Desktopが最新版か確認
 
 ## 開発者向け情報
 
-### ファイル構成
+### プロジェクト構造
 
 ```
-scraping-mcp-server/
-├── .gitignore           # 固定（ログファイル除外）
-├── pyproject.toml       # 固定（パッケージ設定）
-├── server.py            # ツール定義（メインロジック）
-├── main.py              # 固定（エントリーポイント）
-├── install.sh           # macOS/Linux自動インストーラー
-├── install.ps1          # Windows自動インストーラー
-└── uv.lock              # 自動生成
+pilates-mcp-server/
+├── .gitignore           # 固定(ログファイル除外)
+├── pyproject.toml       # 固定(パッケージ設定)
+├── server.py            # ツール定義(メインロジック)← ここだけ編集
+├── main.py              # 固定(エントリーポイント)
+├── install.sh           # macOS/Linux自動インストーラー(固定)
+├── install.ps1          # Windows自動インストーラー(固定)
+└── README.md            # このファイル
 ```
 
 ### ローカル開発
 
 ```bash
-# 依存関係のインストール
+# リポジトリをクローン
+git clone https://github.com/Readify-App/pilates-mcp-server.git
+cd pilates-mcp-server
+
+# 依存関係をインストール
 uv sync
 
-# サーバーをテスト実行
-uv run scraping-mcp-server
-
-# Playwrightブラウザのインストール
-uv run playwright install chromium
+# サーバーを実行
+uv run pilates-mcp-server
 ```
+
+### server.pyの編集
+
+`server.py`のみを編集してツールの機能を追加・変更できます。他のファイルは固定です。
+
+### データソース
+
+このMCPサーバーは、以下のWordPress APIからデータを取得しています:
+- サイト: https://plizgym.co.jp
+- カスタム投稿タイプ: `pilates-studio`
+
+## ライセンス
+
+MIT License
+
+## サポート
+
+問題が発生した場合は、GitHubのIssuesで報告してください。

@@ -2,12 +2,12 @@
 set -e
 
 # ===== ここから変更 =====
-MCP_SERVER_TITLE="Scraping MCP Server"
-MCP_SERVER_KEY="scraping-mcp-server"
+MCP_SERVER_TITLE="Pilates MCP Server"
+MCP_SERVER_KEY="pilates-mcp-server"
 GITHUB_USER="Readify-App"
-GITHUB_REPO="scraping-mcp-server"
-PACKAGE_NAME="scraping-mcp-server"
-USAGE_EXAMPLE="https://example.com のコンテンツを取得して"
+GITHUB_REPO="pilates-mcp-server"
+PACKAGE_NAME="pilates-mcp-server"
+USAGE_EXAMPLE="渋谷のピラティススタジオを検索して"
 # ===== ここまで変更 =====
 
 # 色の定義
@@ -35,7 +35,7 @@ fi
 CONFIG_FILE="$CONFIG_DIR/claude_desktop_config.json"
 
 # 1. uv のインストール確認
-echo -e "${YELLOW}[1/6] uv のインストール確認中...${NC}"
+echo -e "${YELLOW}[1/5] uv のインストール確認中...${NC}"
 if ! command -v uv &> /dev/null; then
     echo -e "${YELLOW}uv がインストールされていません。インストールします...${NC}"
     curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -46,7 +46,7 @@ else
 fi
 
 # 2. Python のインストール確認
-echo -e "${YELLOW}[2/6] Python 3.10+ の確認中...${NC}"
+echo -e "${YELLOW}[2/5] Python 3.10+ の確認中...${NC}"
 if ! uv python list | grep -q "3.1"; then
     echo -e "${YELLOW}Python 3.10+ をインストールします...${NC}"
     uv python install 3.12
@@ -57,7 +57,7 @@ fi
 
 # 3. MCPサーバーのクローン
 INSTALL_DIR="$HOME/mcp-servers/${PACKAGE_NAME}"
-echo -e "${YELLOW}[3/6] ${MCP_SERVER_TITLE} をダウンロード中...${NC}"
+echo -e "${YELLOW}[3/5] ${MCP_SERVER_TITLE} をダウンロード中...${NC}"
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}既存のインストールを削除します...${NC}"
     rm -rf "$INSTALL_DIR"
@@ -68,17 +68,12 @@ cd "$INSTALL_DIR"
 echo -e "${GREEN}✓ ダウンロード完了${NC}"
 
 # 4. 依存関係のインストール
-echo -e "${YELLOW}[4/6] 依存関係をインストール中...${NC}"
+echo -e "${YELLOW}[4/5] 依存関係をインストール中...${NC}"
 uv sync
 echo -e "${GREEN}✓ 依存関係のインストール完了${NC}"
 
-# 5. Playwright のインストール
-echo -e "${YELLOW}[5/6] Playwright ブラウザをインストール中...${NC}"
-uv run playwright install chromium
-echo -e "${GREEN}✓ Playwright のインストール完了${NC}"
-
-# 6. Claude Desktop設定の更新
-echo -e "${YELLOW}[6/6] Claude Desktop の設定を更新中...${NC}"
+# 5. Claude Desktop設定の更新
+echo -e "${YELLOW}[5/5] Claude Desktop の設定を更新中...${NC}"
 mkdir -p "$CONFIG_DIR"
 
 if [ ! -f "$CONFIG_FILE" ]; then
