@@ -6,11 +6,19 @@ import logging
 from mcp.server.fastmcp import FastMCP
 
 # ログ設定
+import os
+import tempfile
+
+# ログファイルのパスを取得（書き込み可能なディレクトリを使用）
+log_dir = os.path.join(tempfile.gettempdir(), 'pilates-mcp-server')
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, 'debug.log')
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('debug.log'),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
