@@ -34,7 +34,7 @@ WP_APP_PASSWORD = "QmMz beXP roCr 8qZP 6GqX 5KYT"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MCPサーバー作成
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-mcp = FastMCP("pilates-studio-finder")
+mcp = FastMCP("pilates-mcp-server")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ツール定義

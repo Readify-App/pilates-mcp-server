@@ -34,25 +34,79 @@ fi
 
 CONFIG_FILE="$CONFIG_DIR/claude_desktop_config.json"
 
+# 必要なコマンドの確認
+echo -e "${YELLOW}[0/5] 必要なコマンドの確認中...${NC}"
+
+# curl の確認
+if ! command -v curl &> /dev/null; then
+    echo -e "${RED}エラー: curl がインストールされていません${NC}"
+    echo -e "${YELLOW}macOS の場合: curl は通常プリインストールされています${NC}"
+    exit 1
+fi
+
+# git の確認
+if ! command -v git &> /dev/null; then
+    echo -e "${RED}エラー: git がインストールされていません${NC}"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo -e "${YELLOW}以下のコマンドでインストールしてください:${NC}"
+        echo -e "  xcode-select --install"
+    else
+        echo -e "${YELLOW}以下のコマンドでインストールしてください:${NC}"
+        echo -e "  sudo apt-get install git"
+    fi
+    exit 1
+fi
+
+# ネットワーク接続の確認（オプション）
+echo -e "${YELLOW}ネットワーク接続を確認中...${NC}"
+if ! curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+    echo -e "${YELLOW}警告: インターネット接続を確認できませんでした${NC}"
+    echo -e "${YELLOW}続行しますが、ダウンロードが失敗する可能性があります${NC}"
+else
+    echo -e "${GREEN}✓ ネットワーク接続を確認しました${NC}"
+fi
+
+echo -e "${GREEN}✓ 必要なコマンドが揃っています${NC}"
+echo ""
+
 # 1. uv のインストール確認
 echo -e "${YELLOW}[1/5] uv のインストール確認中...${NC}"
 if ! command -v uv &> /dev/null; then
     echo -e "${YELLOW}uv がインストールされていません。インストールします...${NC}"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
-    echo -e "${GREEN}✓ uv をインストールしました${NC}"
+    if curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        export PATH="$HOME/.cargo/bin:$PATH"
+        # PATHを確実に反映させるため、再度確認
+        if command -v uv &> /dev/null; then
+            echo -e "${GREEN}✓ uv をインストールしました${NC}"
+        else
+            # まだ見つからない場合は、シェルの設定ファイルに追加を促す
+            echo -e "${YELLOW}uv がインストールされましたが、PATH に追加する必要があります${NC}"
+            echo -e "${YELLOW}以下のコマンドを実行してから、再度このスクリプトを実行してください:${NC}"
+            echo -e "  export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+            echo -e "${YELLOW}または、~/.zshrc に以下を追加してください:${NC}"
+            echo -e "  export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+            exit 1
+        fi
+    else
+        echo -e "${RED}エラー: uv のインストールに失敗しました${NC}"
+        exit 1
+    fi
 else
     echo -e "${GREEN}✓ uv は既にインストールされています${NC}"
 fi
 
 # 2. Python のインストール確認
 echo -e "${YELLOW}[2/5] Python 3.10+ の確認中...${NC}"
-if ! uv python list | grep -q "3.1"; then
-    echo -e "${YELLOW}Python 3.10+ をインストールします...${NC}"
-    uv python install 3.12
-    echo -e "${GREEN}✓ Python 3.12 をインストールしました${NC}"
-else
+if uv python list 2>/dev/null | grep -q "3.1"; then
     echo -e "${GREEN}✓ Python 3.10+ は既にインストールされています${NC}"
+else
+    echo -e "${YELLOW}Python 3.10+ をインストールします...${NC}"
+    if uv python install 3.12; then
+        echo -e "${GREEN}✓ Python 3.12 をインストールしました${NC}"
+    else
+        echo -e "${RED}エラー: Python 3.12 のインストールに失敗しました${NC}"
+        exit 1
+    fi
 fi
 
 # 3. MCPサーバーのクローン
@@ -63,42 +117,115 @@ if [ -d "$INSTALL_DIR" ]; then
     rm -rf "$INSTALL_DIR"
 fi
 mkdir -p "$HOME/mcp-servers"
-git clone "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git" "$INSTALL_DIR"
-cd "$INSTALL_DIR"
-echo -e "${GREEN}✓ ダウンロード完了${NC}"
+if git clone "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git" "$INSTALL_DIR"; then
+    cd "$INSTALL_DIR" || {
+        echo -e "${RED}エラー: ダウンロードしたディレクトリに移動できませんでした${NC}"
+        exit 1
+    }
+    echo -e "${GREEN}✓ ダウンロード完了${NC}"
+else
+    echo -e "${RED}エラー: リポジトリのダウンロードに失敗しました${NC}"
+    echo -e "${YELLOW}インターネット接続を確認してください${NC}"
+    exit 1
+fi
 
 # 4. 依存関係のインストール
 echo -e "${YELLOW}[4/5] 依存関係をインストール中...${NC}"
-uv sync
-echo -e "${GREEN}✓ 依存関係のインストール完了${NC}"
+if [ ! -f "pyproject.toml" ]; then
+    echo -e "${RED}エラー: pyproject.toml が見つかりません${NC}"
+    echo -e "${YELLOW}リポジトリのダウンロードに問題がある可能性があります${NC}"
+    exit 1
+fi
+if uv sync; then
+    echo -e "${GREEN}✓ 依存関係のインストール完了${NC}"
+else
+    echo -e "${RED}エラー: 依存関係のインストールに失敗しました${NC}"
+    echo -e "${YELLOW}インターネット接続と pyproject.toml の内容を確認してください${NC}"
+    exit 1
+fi
 
 # 5. Claude Desktop設定の更新
 echo -e "${YELLOW}[5/5] Claude Desktop の設定を更新中...${NC}"
-mkdir -p "$CONFIG_DIR"
 
-if [ ! -f "$CONFIG_FILE" ]; then
+# 設定ディレクトリの作成と権限確認
+if ! mkdir -p "$CONFIG_DIR"; then
+    echo -e "${RED}エラー: 設定ディレクトリの作成に失敗しました${NC}"
+    echo -e "${YELLOW}パス: $CONFIG_DIR${NC}"
+    exit 1
+fi
+
+# 設定ファイルのバックアップ（既存の場合）
+if [ -f "$CONFIG_FILE" ]; then
+    BACKUP_FILE="${CONFIG_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
+    if cp "$CONFIG_FILE" "$BACKUP_FILE" 2>/dev/null; then
+        echo -e "${YELLOW}既存の設定ファイルをバックアップしました: $(basename "$BACKUP_FILE")${NC}"
+    fi
+else
     echo '{"mcpServers":{}}' > "$CONFIG_FILE"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${RED}エラー: 設定ファイルの作成に失敗しました${NC}"
+        echo -e "${YELLOW}書き込み権限を確認してください${NC}"
+        exit 1
+    fi
 fi
 
 # jq を使って設定を更新
 if ! command -v jq &> /dev/null; then
     echo -e "${YELLOW}jq をインストールします...${NC}"
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        brew install jq
+        if ! command -v brew &> /dev/null; then
+            echo -e "${RED}エラー: Homebrew がインストールされていません${NC}"
+            echo -e "${YELLOW}以下のコマンドでインストールしてください:${NC}"
+            echo -e "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            exit 1
+        fi
+        if brew install jq; then
+            echo -e "${GREEN}✓ jq をインストールしました${NC}"
+        else
+            echo -e "${RED}エラー: jq のインストールに失敗しました${NC}"
+            exit 1
+        fi
     else
-        sudo apt-get update && sudo apt-get install -y jq
+        if sudo apt-get update && sudo apt-get install -y jq; then
+            echo -e "${GREEN}✓ jq をインストールしました${NC}"
+        else
+            echo -e "${RED}エラー: jq のインストールに失敗しました${NC}"
+            exit 1
+        fi
     fi
+    # インストール後、再度確認
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}エラー: jq のインストール後もコマンドが見つかりません${NC}"
+        exit 1
+    fi
+else
+    echo -e "${GREEN}✓ jq は既にインストールされています${NC}"
 fi
 
-# 設定を追加
-jq --arg key "$MCP_SERVER_KEY" \
+# 設定を追加（既存の設定がある場合は上書き）
+if jq --arg key "$MCP_SERVER_KEY" \
    --arg dir "$INSTALL_DIR" \
    '.mcpServers[$key] = {
      "command": "uv",
      "args": ["--directory", $dir, "run", "'"$PACKAGE_NAME"'"]
-   }' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-
-echo -e "${GREEN}✓ 設定ファイルを更新しました${NC}"
+   }' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" 2>/dev/null; then
+    if mv "$CONFIG_FILE.tmp" "$CONFIG_FILE" 2>/dev/null; then
+        echo -e "${GREEN}✓ 設定ファイルを更新しました${NC}"
+        # 既存の設定があったかどうかを確認
+        if jq -e ".mcpServers[\"$MCP_SERVER_KEY\"]" "$CONFIG_FILE" > /dev/null 2>&1; then
+            echo -e "${YELLOW}既存の設定を更新しました${NC}"
+        fi
+    else
+        echo -e "${RED}エラー: 設定ファイルの保存に失敗しました${NC}"
+        rm -f "$CONFIG_FILE.tmp"
+        exit 1
+    fi
+else
+    echo -e "${RED}エラー: 設定ファイルの更新に失敗しました${NC}"
+    echo -e "${YELLOW}JSON ファイルの形式を確認してください${NC}"
+    rm -f "$CONFIG_FILE.tmp"
+    exit 1
+fi
 echo ""
 echo -e "${BLUE}================================================${NC}"
 echo -e "${GREEN}🎉 インストール完了！${NC}"
