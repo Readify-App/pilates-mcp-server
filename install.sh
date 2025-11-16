@@ -202,18 +202,52 @@ else
     echo -e "${GREEN}✓ jq は既にインストールされています${NC}"
 fi
 
+# uv のフルパスを取得（Claude Desktopの環境変数にPATHが含まれていない場合に備える）
+UV_PATH="uv"
+if command -v uv &> /dev/null; then
+    UV_PATH=$(command -v uv)
+else
+    # 通常のインストール場所を確認
+    if [ -f "$HOME/.cargo/bin/uv" ]; then
+        UV_PATH="$HOME/.cargo/bin/uv"
+    else
+        echo -e "${YELLOW}警告: uv のパスを自動検出できませんでした。'uv' を使用します${NC}"
+        echo -e "${YELLOW}Claude Desktop の環境変数に PATH が設定されていることを確認してください${NC}"
+    fi
+fi
+
+# 既存の設定を確認（デバッグ用）
+if jq -e ".mcpServers[\"$MCP_SERVER_KEY\"]" "$CONFIG_FILE" > /dev/null 2>&1; then
+    echo -e "${YELLOW}既存の設定を確認中...${NC}"
+    EXISTING_DIR=$(jq -r ".mcpServers[\"$MCP_SERVER_KEY\"].args[1] // empty" "$CONFIG_FILE" 2>/dev/null)
+    if [ -n "$EXISTING_DIR" ] && [ "$EXISTING_DIR" != "$INSTALL_DIR" ]; then
+        echo -e "${YELLOW}既存の設定で間違ったディレクトリパスが検出されました${NC}"
+        echo -e "${YELLOW}  現在: $EXISTING_DIR${NC}"
+        echo -e "${YELLOW}  正しい: $INSTALL_DIR${NC}"
+        echo -e "${YELLOW}設定を更新します...${NC}"
+    fi
+fi
+
 # 設定を追加（既存の設定がある場合は上書き）
+# jqでJSON文字列として正しくエスケープするため、--arg を使用
 if jq --arg key "$MCP_SERVER_KEY" \
+   --arg uv_path "$UV_PATH" \
    --arg dir "$INSTALL_DIR" \
+   --arg pkg "$PACKAGE_NAME" \
    '.mcpServers[$key] = {
-     "command": "uv",
-     "args": ["--directory", $dir, "run", "'"$PACKAGE_NAME"'"]
+     "command": $uv_path,
+     "args": ["--directory", $dir, "run", $pkg]
    }' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" 2>/dev/null; then
     if mv "$CONFIG_FILE.tmp" "$CONFIG_FILE" 2>/dev/null; then
-        echo -e "${GREEN}✓ 設定ファイルを更新しました${NC}"
-        # 既存の設定があったかどうかを確認
+        # 設定ファイルの内容を検証
         if jq -e ".mcpServers[\"$MCP_SERVER_KEY\"]" "$CONFIG_FILE" > /dev/null 2>&1; then
-            echo -e "${YELLOW}既存の設定を更新しました${NC}"
+            echo -e "${GREEN}✓ 設定ファイルを更新しました${NC}"
+            # 生成された設定を表示（デバッグ用）
+            echo -e "${BLUE}生成された設定:${NC}"
+            jq ".mcpServers[\"$MCP_SERVER_KEY\"]" "$CONFIG_FILE" 2>/dev/null | sed 's/^/  /'
+        else
+            echo -e "${RED}エラー: 設定が正しく追加されていません${NC}"
+            exit 1
         fi
     else
         echo -e "${RED}エラー: 設定ファイルの保存に失敗しました${NC}"

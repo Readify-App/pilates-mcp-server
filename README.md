@@ -96,11 +96,26 @@ zen place pilatesの詳細を教えて
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
+### `spawn uv ENOENT` エラーが発生する場合
+
+`uv` コマンドが見つからないエラーです。以下のいずれかを試してください:
+
+1. **再インストール**: 最新版の `install.sh` を実行してください（`uv` のフルパスが自動設定されます）
+2. **手動修正**: 設定ファイルの `command` を `uv` から `/Users/ユーザー名/.cargo/bin/uv` に変更してください
+
+### `--directory` の引数が間違っているエラー
+
+設定ファイルの `args` 配列の2番目の要素（`--directory` の引数）が間違っている場合:
+
+1. **再インストール**: 最新版の `install.sh` を実行してください（自動で修正されます）
+2. **手動修正**: 設定ファイルの `args[1]` を `/Users/ユーザー名/mcp-servers/pilates-mcp-server` に変更してください
+
 ### インストールに失敗する場合
 
 1. Python 3.10以上がインストールされているか確認
 2. インターネット接続を確認
 3. Claude Desktopが最新版か確認
+4. 必要なコマンド（curl, git, jq）がインストールされているか確認
 
 ## 開発者向け情報
 
