@@ -3,6 +3,7 @@
 
 import httpx
 import logging
+import json
 from mcp.server.fastmcp import FastMCP
 
 # ログ設定
@@ -37,6 +38,13 @@ WP_APP_PASSWORD = "QmMz beXP roCr 8qZP 6GqX 5KYT"
 mcp = FastMCP("pilates-mcp-server")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ヘルパー関数
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def get_status_emoji(status: str) -> str:
+    """ステータスに応じた絵文字を返す"""
+    return {"publish": "🟢", "draft": "📝", "private": "🔒", "pending": "⏳"}.get(status, "❓")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ツール定義
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -50,7 +58,7 @@ async def pilates_list(
     件数: int = 20
 ) -> str:
     """
-    ピラティススタジオの一覧を取得します。
+    ピラティススタジオの一覧を取得します（下書き含む）。
     店舗名やエリアで検索できます。
     """
     logger.info(f"pilates_list called with 店舗名={店舗名}, エリア={エリア}, 件数={件数}")
@@ -63,7 +71,8 @@ async def pilates_list(
             logger.debug(f"Search query: {search_query}")
             
             params = {
-                "per_page": 件数
+                "per_page": 件数,
+                "status": "any"  # 下書き・公開・非公開すべて取得
             }
             
             if search_query:
@@ -99,9 +108,10 @@ async def pilates_list(
             result = f"🏢 ピラティススタジオ情報（{len(stores)}件）\n\n"
             
             for store in stores:
+                status_emoji = get_status_emoji(store.get('status', ''))
                 result += f"━━━━━━━━━━━━━━━━\n"
-                result += f"📍 {store['title']['rendered']}\n"
-                result += f"🆔 ID: {store['id']}\n"
+                result += f"{status_emoji} {store['title']['rendered']}\n"
+                result += f"🆔 ID: {store['id']} | ステータス: {store.get('status', '不明')}\n"
                 
                 # カスタムフィールド取得
                 if 'custom_fields' in store:
@@ -127,7 +137,7 @@ async def pilates_list(
             return result
         
         except Exception as e:
-            logger.exception(f"Error in pilates_detail: {e}")
+            logger.exception(f"Error in pilates_list: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
@@ -137,7 +147,7 @@ async def pilates_list(
 @mcp.tool()
 async def pilates_detail(店舗名: str) -> str:
     """
-    特定のピラティススタジオの詳細情報をすべて取得します。
+    特定のピラティススタジオの詳細情報をすべて取得します（下書き含む）。
     """
     logger.info(f"pilates_detail called with 店舗名={店舗名}")
     
@@ -145,11 +155,11 @@ async def pilates_detail(店舗名: str) -> str:
         try:
             auth = (WP_USERNAME, WP_APP_PASSWORD)
             
-            # 店舗を検索
+            # 店舗を検索（下書き含む）
             logger.debug(f"Searching for store: {店舗名}")
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
-                params={"search": 店舗名, "per_page": 1},
+                params={"search": 店舗名, "per_page": 1, "status": "any"},
                 auth=auth,
                 timeout=30.0
             )
@@ -200,8 +210,10 @@ async def pilates_detail(店舗名: str) -> str:
             if 'title' not in store or 'rendered' not in store.get('title', {}):
                 return f"データ形式が正しくありません。"
             
+            status_emoji = get_status_emoji(store.get('status', ''))
             result = f"━━━━━━━━━━━━━━━━━━━━\n"
-            result += f"📍 {store['title']['rendered']}\n"
+            result += f"{status_emoji} {store['title']['rendered']}\n"
+            result += f"🆔 ID: {store['id']} | ステータス: {store.get('status', '不明')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
             
             # 本文
@@ -284,7 +296,7 @@ async def pilates_detail(店舗名: str) -> str:
             return result
         
         except Exception as e:
-            logger.exception(f"Error in pilates_list: {e}")
+            logger.exception(f"Error in pilates_detail: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
@@ -294,7 +306,7 @@ async def pilates_detail(店舗名: str) -> str:
 @mcp.tool()
 async def pilates_by_id(投稿ID: int) -> str:
     """
-    投稿IDを指定してピラティススタジオの情報を取得します。
+    投稿IDを指定してピラティススタジオの情報を取得します（下書き含む）。
     """
     logger.info(f"pilates_by_id called with ID={投稿ID}")
     
@@ -324,9 +336,10 @@ async def pilates_by_id(投稿ID: int) -> str:
             if 'title' not in store or 'rendered' not in store.get('title', {}):
                 return f"ID {投稿ID} のデータ形式が正しくありません。レスポンス: {store}"
             
+            status_emoji = get_status_emoji(store.get('status', ''))
             result = f"━━━━━━━━━━━━━━━━━━━━\n"
-            result += f"📍 {store['title']['rendered']}\n"
-            result += f"🆔 ID: {store['id']}\n"
+            result += f"{status_emoji} {store['title']['rendered']}\n"
+            result += f"🆔 ID: {store['id']} | ステータス: {store.get('status', '不明')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
             
             # カスタムフィールドをすべて表示
@@ -354,7 +367,7 @@ async def pilates_by_id(投稿ID: int) -> str:
 @mcp.tool()
 async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
     """
-    エリア名でピラティススタジオを検索します。
+    エリア名でピラティススタジオを検索します（下書き含む）。
     例: 東京都葛飾区、渋谷、新宿など
     """
     logger.info(f"pilates_by_area called with エリア={エリア}, 件数={件数}")
@@ -363,11 +376,11 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
         try:
             auth = (WP_USERNAME, WP_APP_PASSWORD)
             
-            # 全件取得してカスタムフィールドでフィルタリング
+            # 全件取得してカスタムフィールドでフィルタリング（下書き含む）
             logger.debug("Fetching all stores for area filtering")
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
-                params={"per_page": 100},
+                params={"per_page": 100, "status": "any"},
                 auth=auth,
                 timeout=30.0
             )
@@ -413,8 +426,10 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
             result = f"🏢 {エリア}のピラティススタジオ（{len(filtered)}件）\n\n"
             
             for store in filtered:
+                status_emoji = get_status_emoji(store.get('status', ''))
                 result += f"━━━━━━━━━━━━━━━━\n"
-                result += f"📍 {store['title']['rendered']}\n"
+                result += f"{status_emoji} {store['title']['rendered']}\n"
+                result += f"🆔 ID: {store['id']} | ステータス: {store.get('status', '不明')}\n"
                 
                 if 'custom_fields' in store:
                     fields = store['custom_fields']
@@ -433,6 +448,108 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
         
         except Exception as e:
             logger.exception(f"Error in pilates_by_area: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール5: カスタムフィールドを更新
+# ========================================
+@mcp.tool()
+async def pilates_update(
+    投稿ID: int,
+    フィールド名: str,
+    新しい値: str
+) -> str:
+    """
+    ピラティススタジオのカスタムフィールドを更新します。
+    
+    対応フィールド例:
+    - 表用特徴, 表用料金, 表用アクセス
+    - 簡易地区, 住所, 営業時間, 定休日, アクセス, 駐車場, 店舗公式サイト
+    - 初期費用, 体験, レッスン時間
+    - キャンペーン期間, キャンペーン内容
+    - AFF_URL, 目次, ボタン名
+    """
+    logger.info(f"pilates_update called with ID={投稿ID}, field={フィールド名}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            
+            # POSTリクエストで更新
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
+                auth=auth,
+                json={
+                    "custom_fields": {
+                        フィールド名: 新しい値
+                    }
+                },
+                timeout=30.0
+            )
+            
+            logger.debug(f"Update response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                store = response.json()
+                return f"✅ 更新成功！\n\n投稿ID: {投稿ID}\nタイトル: {store['title']['rendered']}\n\n更新内容:\n  {フィールド名}: {新しい値}"
+            else:
+                error = response.json()
+                logger.error(f"Update failed: {error}")
+                return f"❌ 更新失敗\n\nエラー: {error.get('message', error)}"
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_update: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール6: 複数フィールドを一括更新
+# ========================================
+@mcp.tool()
+async def pilates_update_multiple(
+    投稿ID: int,
+    更新データJSON: str
+) -> str:
+    """
+    複数のカスタムフィールドを一括更新します。
+    
+    更新データJSONの形式:
+    {"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜"}
+    """
+    logger.info(f"pilates_update_multiple called with ID={投稿ID}")
+    
+    try:
+        data = json.loads(更新データJSON)
+    except json.JSONDecodeError as e:
+        return f"❌ JSONの形式が正しくありません\n\nエラー: {str(e)}\n\n正しい形式の例:\n{{\"簡易地区\": \"東京都渋谷区\", \"表用料金\": \"月額10,000円〜\"}}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
+                auth=auth,
+                json={"custom_fields": data},
+                timeout=30.0
+            )
+            
+            logger.debug(f"Update response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                store = response.json()
+                result = f"✅ 更新成功！\n\n投稿ID: {投稿ID}\nタイトル: {store['title']['rendered']}\n\n更新内容:\n"
+                for key, value in data.items():
+                    result += f"  • {key}: {value}\n"
+                return result
+            else:
+                error = response.json()
+                logger.error(f"Update failed: {error}")
+                return f"❌ 更新失敗\n\nエラー: {error.get('message', error)}"
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_update_multiple: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
