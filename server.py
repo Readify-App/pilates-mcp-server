@@ -4,6 +4,7 @@
 import httpx
 import logging
 import json
+import base64
 from mcp.server.fastmcp import FastMCP
 
 # ログ設定
@@ -31,6 +32,21 @@ logger = logging.getLogger(__name__)
 WP_SITE_URL = "https://plizgym.co.jp"
 WP_USERNAME = "admin"
 WP_APP_PASSWORD = "QmMz beXP roCr 8qZP 6GqX 5KYT"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 認証ヘッダーを生成（WordPress REST API用）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def get_auth_headers():
+    """
+    WordPress REST API用のBasic認証ヘッダーを生成
+    参考: https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/
+    """
+    credentials = f"{WP_USERNAME}:{WP_APP_PASSWORD}"
+    token = base64.b64encode(credentials.encode()).decode('utf-8')
+    return {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json"
+    }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MCPサーバー作成
@@ -65,7 +81,7 @@ async def pilates_list(
     
     async with httpx.AsyncClient() as client:
         try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            headers = get_auth_headers()
             
             search_query = 店舗名 or エリア or ""
             logger.debug(f"Search query: {search_query}")
@@ -81,7 +97,7 @@ async def pilates_list(
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
                 params=params,
-                auth=auth,
+                headers=headers,
                 timeout=30.0
             )
             
@@ -153,14 +169,14 @@ async def pilates_detail(店舗名: str) -> str:
     
     async with httpx.AsyncClient() as client:
         try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            headers = get_auth_headers()
             
             # 店舗を検索（下書き含む）
             logger.debug(f"Searching for store: {店舗名}")
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
                 params={"search": 店舗名, "per_page": 1, "status": "any"},
-                auth=auth,
+                headers=headers,
                 timeout=30.0
             )
             
@@ -192,7 +208,7 @@ async def pilates_detail(店舗名: str) -> str:
             logger.debug(f"Fetching details for store ID: {store_id}")
             detail_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{store_id}",
-                auth=auth,
+                headers=headers,
                 timeout=30.0
             )
             
@@ -312,12 +328,12 @@ async def pilates_by_id(投稿ID: int) -> str:
     
     async with httpx.AsyncClient() as client:
         try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            headers = get_auth_headers()
             
             logger.debug(f"Fetching pilates studio with ID: {投稿ID}")
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
-                auth=auth,
+                headers=headers,
                 timeout=30.0
             )
             
@@ -374,14 +390,14 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
     
     async with httpx.AsyncClient() as client:
         try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
+            headers = get_auth_headers()
             
             # 全件取得してカスタムフィールドでフィルタリング（下書き含む）
             logger.debug("Fetching all stores for area filtering")
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
                 params={"per_page": 100, "status": "any"},
-                auth=auth,
+                headers=headers,
                 timeout=30.0
             )
             
@@ -448,108 +464,6 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
         
         except Exception as e:
             logger.exception(f"Error in pilates_by_area: {e}")
-            return f"エラーが発生しました: {str(e)}"
-
-
-# ========================================
-# ツール5: カスタムフィールドを更新
-# ========================================
-@mcp.tool()
-async def pilates_update(
-    投稿ID: int,
-    フィールド名: str,
-    新しい値: str
-) -> str:
-    """
-    ピラティススタジオのカスタムフィールドを更新します。
-    
-    対応フィールド例:
-    - 表用特徴, 表用料金, 表用アクセス
-    - 簡易地区, 住所, 営業時間, 定休日, アクセス, 駐車場, 店舗公式サイト
-    - 初期費用, 体験, レッスン時間
-    - キャンペーン期間, キャンペーン内容
-    - AFF_URL, 目次, ボタン名
-    """
-    logger.info(f"pilates_update called with ID={投稿ID}, field={フィールド名}")
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
-            
-            # POSTリクエストで更新
-            response = await client.post(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
-                auth=auth,
-                json={
-                    "custom_fields": {
-                        フィールド名: 新しい値
-                    }
-                },
-                timeout=30.0
-            )
-            
-            logger.debug(f"Update response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                store = response.json()
-                return f"✅ 更新成功！\n\n投稿ID: {投稿ID}\nタイトル: {store['title']['rendered']}\n\n更新内容:\n  {フィールド名}: {新しい値}"
-            else:
-                error = response.json()
-                logger.error(f"Update failed: {error}")
-                return f"❌ 更新失敗\n\nエラー: {error.get('message', error)}"
-        
-        except Exception as e:
-            logger.exception(f"Error in pilates_update: {e}")
-            return f"エラーが発生しました: {str(e)}"
-
-
-# ========================================
-# ツール6: 複数フィールドを一括更新
-# ========================================
-@mcp.tool()
-async def pilates_update_multiple(
-    投稿ID: int,
-    更新データJSON: str
-) -> str:
-    """
-    複数のカスタムフィールドを一括更新します。
-    
-    更新データJSONの形式:
-    {"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜"}
-    """
-    logger.info(f"pilates_update_multiple called with ID={投稿ID}")
-    
-    try:
-        data = json.loads(更新データJSON)
-    except json.JSONDecodeError as e:
-        return f"❌ JSONの形式が正しくありません\n\nエラー: {str(e)}\n\n正しい形式の例:\n{{\"簡易地区\": \"東京都渋谷区\", \"表用料金\": \"月額10,000円〜\"}}"
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            auth = (WP_USERNAME, WP_APP_PASSWORD)
-            
-            response = await client.post(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
-                auth=auth,
-                json={"custom_fields": data},
-                timeout=30.0
-            )
-            
-            logger.debug(f"Update response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                store = response.json()
-                result = f"✅ 更新成功！\n\n投稿ID: {投稿ID}\nタイトル: {store['title']['rendered']}\n\n更新内容:\n"
-                for key, value in data.items():
-                    result += f"  • {key}: {value}\n"
-                return result
-            else:
-                error = response.json()
-                logger.error(f"Update failed: {error}")
-                return f"❌ 更新失敗\n\nエラー: {error.get('message', error)}"
-        
-        except Exception as e:
-            logger.exception(f"Error in pilates_update_multiple: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
