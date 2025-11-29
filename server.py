@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 # WordPress設定（直接指定）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WP_SITE_URL = "https://plizgym.co.jp"
-WP_USERNAME = "admin"
-WP_APP_PASSWORD = "QmMz beXP roCr 8qZP 6GqX 5KYT"
+WP_USERNAME = "admin@plizgym.co.jp"
+WP_APP_PASSWORD = "SDVb bgJk W4zh okVe ruBh GvDy"
 WP_POST_TYPE = "pilates-studio"
 ALLOWED_STATUSES = ["publish", "draft"]
 
@@ -424,6 +424,13 @@ async def pilates_by_id(投稿ID: int) -> str:
             
             # 権限エラーの場合はcontext=editを削除して再試行
             if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
+                # エラーレスポンスの内容をログに記録
+                try:
+                    error_data = response.json() if response.text else {}
+                    logger.warning(f"権限エラー詳細: {error_data}")
+                except:
+                    logger.warning(f"権限エラーレスポンス: {response.text[:200] if response.text else 'No response body'}")
+                
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
@@ -437,7 +444,29 @@ async def pilates_by_id(投稿ID: int) -> str:
                 return f"ID {投稿ID} のスタジオが見つかりませんでした。"
             
             if response.status_code != 200:
-                return f"エラーが発生しました: HTTPステータス {response.status_code}"
+                try:
+                    error_data = response.json() if response.text else {}
+                    error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                    error_code = error_data.get('code', '')
+                    logger.error(f"API Error: {response.status_code} - {error_data}")
+                    
+                    # 401エラーの場合は認証エラーとして詳細を表示
+                    if response.status_code == 401:
+                        return (
+                            f"❌ 認証エラー（401 Unauthorized）が発生しました。\n"
+                            f"エラー: {error_message}\n"
+                            f"コード: {error_code}\n\n"
+                            f"考えられる原因:\n"
+                            f"1. WordPressのアプリケーションパスワードが無効になっている\n"
+                            f"2. ユーザー名またはパスワードが間違っている\n"
+                            f"3. この投稿ID（{投稿ID}）にアクセスする権限がない\n"
+                            f"4. 認証情報が正しく送信されていない\n\n"
+                            f"WordPress管理画面でアプリケーションパスワードを再生成してください。"
+                        )
+                    return f"エラーが発生しました: {error_message}"
+                except Exception as e:
+                    logger.error(f"Error parsing response: {e}")
+                    return f"エラーが発生しました: HTTPステータス {response.status_code}"
             
             store = response.json()
             
