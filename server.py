@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 WP_SITE_URL = "https://plizgym.co.jp"
 WP_USERNAME = "admin"
 WP_APP_PASSWORD = "QmMz beXP roCr 8qZP 6GqX 5KYT"
+WP_POST_TYPE = "pilates-studio"
+ALLOWED_STATUSES = ["publish", "draft"]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 認証ヘッダーを生成（WordPress REST API用）
@@ -60,6 +62,29 @@ def get_status_emoji(status: str) -> str:
     """ステータスに応じた絵文字を返す"""
     return {"publish": "🟢", "draft": "📝", "private": "🔒", "pending": "⏳"}.get(status, "❓")
 
+
+def _build_status_param(arg: str | None = None) -> str:
+    """
+    ステータスパラメータを構築する。
+    指定がない場合はデフォルトで publish,draft を返す。
+    """
+    if not arg:
+        return ",".join(ALLOWED_STATUSES)
+    
+    tokens = [token.strip().lower() for token in arg.split(",") if token.strip()]
+    selected = [token for token in tokens if token in ALLOWED_STATUSES]
+    
+    if not selected:
+        selected = ALLOWED_STATUSES.copy()
+    
+    # 重複除去（順序保持）
+    ordered_unique: list[str] = []
+    for status in selected:
+        if status not in ordered_unique:
+            ordered_unique.append(status)
+    
+    return ",".join(ordered_unique)
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ツール定義
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -71,13 +96,21 @@ def get_status_emoji(status: str) -> str:
 async def pilates_list(
     店舗名: str = "",
     エリア: str = "",
-    件数: int = 20
+    件数: int = 20,
+    status: str = "publish,draft"
 ) -> str:
     """
     ピラティススタジオの一覧を取得します（下書き含む）。
     店舗名やエリアで検索できます。
+    WordPress 管理画面と同等の情報を取得できます。
+    
+    Args:
+        店舗名: 店舗名で検索
+        エリア: エリアで検索
+        件数: 取得件数 (1-100)
+        status: 取得する投稿ステータス（例: "publish", "draft", "publish,draft"）
     """
-    logger.info(f"pilates_list called with 店舗名={店舗名}, エリア={エリア}, 件数={件数}")
+    logger.info(f"pilates_list called with 店舗名={店舗名}, エリア={エリア}, 件数={件数}, status={status}")
     
     async with httpx.AsyncClient() as client:
         try:
@@ -87,15 +120,16 @@ async def pilates_list(
             logger.debug(f"Search query: {search_query}")
             
             params = {
-                "per_page": 件数,
-                "status": "any"  # 下書き・公開・非公開すべて取得
+                "per_page": min(max(件数, 1), 100),
+                "status": _build_status_param(status),
+                "context": "edit"  # 編集コンテキストで下書きも取得可能に
             }
             
             if search_query:
                 params["search"] = search_query
             
             response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                 params=params,
                 headers=headers,
                 timeout=30.0
@@ -161,11 +195,16 @@ async def pilates_list(
 # ツール2: スタジオ詳細取得
 # ========================================
 @mcp.tool()
-async def pilates_detail(店舗名: str) -> str:
+async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
     """
     特定のピラティススタジオの詳細情報をすべて取得します（下書き含む）。
+    WordPress 管理画面と同等の情報を取得できます。
+    
+    Args:
+        店舗名: 検索する店舗名
+        status: 取得する投稿ステータス（例: "publish", "draft", "publish,draft"）
     """
-    logger.info(f"pilates_detail called with 店舗名={店舗名}")
+    logger.info(f"pilates_detail called with 店舗名={店舗名}, status={status}")
     
     async with httpx.AsyncClient() as client:
         try:
@@ -174,8 +213,13 @@ async def pilates_detail(店舗名: str) -> str:
             # 店舗を検索（下書き含む）
             logger.debug(f"Searching for store: {店舗名}")
             search_response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
-                params={"search": 店舗名, "per_page": 1, "status": "any"},
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
+                params={
+                    "search": 店舗名,
+                    "per_page": 1,
+                    "status": _build_status_param(status),
+                    "context": "edit"
+                },
                 headers=headers,
                 timeout=30.0
             )
@@ -204,10 +248,11 @@ async def pilates_detail(店舗名: str) -> str:
             store_id = stores[0]['id']
             logger.info(f"Found store ID: {store_id}")
             
-            # 詳細取得
+            # 詳細取得（編集コンテキストで下書きも取得可能に）
             logger.debug(f"Fetching details for store ID: {store_id}")
             detail_response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{store_id}",
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{store_id}",
+                params={"context": "edit"},
                 headers=headers,
                 timeout=30.0
             )
@@ -323,6 +368,7 @@ async def pilates_detail(店舗名: str) -> str:
 async def pilates_by_id(投稿ID: int) -> str:
     """
     投稿IDを指定してピラティススタジオの情報を取得します（下書き含む）。
+    WordPress 管理画面と同等の情報を取得できます。
     """
     logger.info(f"pilates_by_id called with ID={投稿ID}")
     
@@ -332,7 +378,8 @@ async def pilates_by_id(投稿ID: int) -> str:
             
             logger.debug(f"Fetching pilates studio with ID: {投稿ID}")
             response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio/{投稿ID}",
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
+                params={"context": "edit"},  # 編集コンテキストで下書きも取得可能に
                 headers=headers,
                 timeout=30.0
             )
@@ -381,12 +428,18 @@ async def pilates_by_id(投稿ID: int) -> str:
 # ツール4: エリアで絞り込み
 # ========================================
 @mcp.tool()
-async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
+async def pilates_by_area(エリア: str, 件数: int = 10, status: str = "publish,draft") -> str:
     """
     エリア名でピラティススタジオを検索します（下書き含む）。
     例: 東京都葛飾区、渋谷、新宿など
+    WordPress 管理画面と同等の情報を取得できます。
+    
+    Args:
+        エリア: 検索するエリア名
+        件数: 取得件数
+        status: 取得する投稿ステータス（例: "publish", "draft", "publish,draft"）
     """
-    logger.info(f"pilates_by_area called with エリア={エリア}, 件数={件数}")
+    logger.info(f"pilates_by_area called with エリア={エリア}, 件数={件数}, status={status}")
     
     async with httpx.AsyncClient() as client:
         try:
@@ -395,8 +448,12 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
             # 全件取得してカスタムフィールドでフィルタリング（下書き含む）
             logger.debug("Fetching all stores for area filtering")
             response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/pilates-studio",
-                params={"per_page": 100, "status": "any"},
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
+                params={
+                    "per_page": 100,
+                    "status": _build_status_param(status),
+                    "context": "edit"
+                },
                 headers=headers,
                 timeout=30.0
             )
@@ -465,6 +522,962 @@ async def pilates_by_area(エリア: str, 件数: int = 10) -> str:
         except Exception as e:
             logger.exception(f"Error in pilates_by_area: {e}")
             return f"エラーが発生しました: {str(e)}"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ヘルパー関数（更新用）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def _pilates_wp_post(path: str, payload: dict) -> dict:
+    """
+    WordPress REST APIにPOSTリクエストを送信
+    """
+    url = path
+    if not url.startswith("http"):
+        url = f"{WP_SITE_URL}/wp-json/wp/v2/{path.lstrip('/')}"
+    
+    headers = get_auth_headers()
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        
+        if response.status_code >= 400:
+            error_data = response.json() if response.text else {"message": str(response.text)}
+            raise RuntimeError(
+                f"WordPress APIエラー (HTTP {response.status_code}): {json.dumps(error_data, ensure_ascii=False)}"
+            )
+        
+        result = response.json()
+        if isinstance(result, dict):
+            return result
+        raise RuntimeError("予期しないレスポンス形式です。JSONオブジェクトを受信できませんでした。")
+
+
+def _pilates_format_update_summary(
+    post: dict,
+    updated_fields: dict,
+    field_group: str
+) -> str:
+    """更新結果をフォーマット"""
+    title = post.get('title', {}).get('rendered', 'タイトル未設定')
+    lines = [
+        "✅ 更新成功",
+        f"ID: {post.get('id')}",
+        f"タイトル: {title}",
+        f"対象: {field_group}",
+        "",
+        "更新内容:"
+    ]
+    for key, value in updated_fields.items():
+        lines.append(f"  • {key}: {value}")
+    return "\n".join(lines)
+
+
+def _pilates_parse_fields_json(raw: str) -> tuple[dict | None, str | None]:
+    """JSON文字列をパース"""
+    if not raw or not raw.strip():
+        return None, None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"❌ JSONの形式が正しくありません: {exc}"
+    if not isinstance(data, dict):
+        return None, "❌ JSONはオブジェクト（Key/Value形式）で指定してください。"
+    return data, None
+
+
+async def _pilates_handle_update_tool(
+    *,
+    post_id: int,
+    fields_json: str,
+    container: str,
+    wrap_payload: bool,
+) -> str:
+    """カスタムフィールド更新の共通処理"""
+    try:
+        data = json.loads(fields_json)
+    except json.JSONDecodeError as exc:
+        return (
+            "❌ JSONの形式に問題があります。\n"
+            f"エラー: {exc}\n"
+            "例: {\"カスタムフィールド名\": \"値\"}"
+        )
+    
+    if not isinstance(data, dict) or not data:
+        return "❌ JSONはキーと値を持つオブジェクト形式で指定してください。"
+    
+    container = (container or "meta").strip()
+    wrap_payload = bool(wrap_payload)
+    
+    if wrap_payload:
+        # containerでラップして送信
+        if container not in ("custom_fields", "meta", "acf"):
+            return (
+                f"❌ container='{container}' はサポートされていません。"
+                " 使用可能: custom_fields / meta / acf"
+            )
+        payload = {container: data}
+        summary_fields = data
+        field_group = f"pilates-studio:{container}"
+    else:
+        # そのまま送信
+        payload = data
+        summary_fields = data
+        field_group = "pilates-studio:raw"
+    
+    logger.info(
+        "[Pilates] 更新開始 id=%s container=%s wrap=%s",
+        post_id,
+        container,
+        wrap_payload,
+    )
+    
+    try:
+        post = await _pilates_wp_post(f"{WP_POST_TYPE}/{post_id}", payload)
+    except RuntimeError as exc:
+        logger.error(
+            "[Pilates] 更新失敗 id=%s : %s",
+            post_id,
+            exc,
+        )
+        return f"❌ 更新に失敗しました。\n{exc}"
+    
+    return _pilates_format_update_summary(post, summary_fields, field_group)
+
+
+# ========================================
+# ツール5: カスタムフィールド更新
+# ========================================
+@mcp.tool()
+async def pilates_update_fields(
+    投稿ID: int,
+    フィールドJSON: str,
+    container: str = "meta",
+    wrap_payload: bool = True,
+) -> str:
+    """
+    ピラティススタジオのカスタムフィールドを更新します。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID
+        フィールドJSON: {"フィールド名": "値"} 形式のJSON文字列
+        container: custom_fields / meta / acf のいずれか（wrap_payload=True の場合）
+        wrap_payload: True で JSON を container 内に包んで送信、False で JSON をそのまま送信
+    
+    例:
+        フィールドJSON: '{"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜"}'
+    """
+    logger.info(f"pilates_update_fields called with ID={投稿ID}")
+    
+    return await _pilates_handle_update_tool(
+        post_id=投稿ID,
+        fields_json=フィールドJSON,
+        container=container,
+        wrap_payload=wrap_payload,
+    )
+
+
+def _pilates_normalize_single_status(status: str | None) -> str:
+    """ステータスを正規化（単一ステータス用）"""
+    value = (status or "").strip().lower()
+    if value in ALLOWED_STATUSES:
+        return value
+    return "draft"
+
+
+def _pilates_format_post_action_result(action: str, post: dict) -> str:
+    """投稿アクション結果をフォーマット"""
+    title = post.get('title', {}).get('rendered', 'タイトル未設定')
+    status = post.get('status', 'unknown')
+    post_id = post.get('id')
+    link = post.get('link') or ""
+    edit_url = f"{WP_SITE_URL}/wp-admin/post.php?post={post_id}&action=edit" if post_id else "N/A"
+    lines = [
+        action,
+        f"🆔 ID: {post_id} / status: {status}",
+        f"📍 タイトル: {title}",
+        f"🔗 表示URL: {link or 'N/A'}",
+        f"✏️ 編集URL: {edit_url}",
+    ]
+    return "\n".join(lines)
+
+
+# ========================================
+# ツール12: pilates-studio 投稿作成
+# ========================================
+@mcp.tool()
+async def pilates_create_post(
+    タイトル: str,
+    本文: str = "",
+    status: str = "draft",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    ピラティススタジオ カスタム投稿を新規作成します。
+    
+    Args:
+        タイトル: 投稿のタイトル（必須）
+        本文: 投稿の本文
+        status: 投稿ステータス（"publish" または "draft"、デフォルト: "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+        抜粋: 投稿の抜粋
+        slug: 投稿のスラッグ
+    
+    カスタムフィールドの構造:
+    - 表用情報: 表用特徴、表用料金、表用アクセス
+    - 基本情報: 簡易地区、住所、営業時間、定休日、アクセス、駐車場、店舗公式サイト
+    - 料金系情報: h4料金プラン直下、初期費用、体験、価格（配列）
+    - レッスン情報: レッスン時間、レッスン方式（配列）、ジャンル（配列）、取材体験済（配列）、男性利用可否（配列）
+    - 広告強化施策: AFF_URL、目次、ボタン名
+    - 画像類: 画像_説明付（配列）
+    - キャンペーン情報: キャンペーン期間、キャンペーン内容
+    - 関連記事: 関連記事（配列）、体験_ユーチューブ
+    
+    例:
+        フィールドJSON: '{"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜", "価格": [...]}'
+    """
+    logger.info(f"pilates_create_post called with タイトル={タイトル}")
+    
+    clean_title = (タイトル or "").strip()
+    if not clean_title:
+        return "タイトルを指定してください。"
+    
+    payload: dict = {
+        "title": clean_title,
+        "status": _pilates_normalize_single_status(status),
+    }
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    
+    fields, error = _pilates_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload["meta"] = fields
+    
+    try:
+        post = await _pilates_wp_post(WP_POST_TYPE, payload)
+    except RuntimeError as exc:
+        logger.error("[Pilates] 投稿作成失敗: %s", exc)
+        return f"❌ 作成に失敗しました。\n{exc}"
+    
+    return _pilates_format_post_action_result("✅ pilates-studio 投稿を作成しました", post)
+
+
+# ========================================
+# ツール13: pilates-studio 投稿更新
+# ========================================
+@mcp.tool()
+async def pilates_update_post(
+    投稿ID: int,
+    タイトル: str = "",
+    本文: str = "",
+    status: str = "",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    ピラティススタジオ 投稿のタイトル / 本文 / ステータス / メタ情報を更新します。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID（必須）
+        タイトル: 新しいタイトル
+        本文: 新しい本文
+        status: 新しいステータス（"publish" または "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+        抜粋: 新しい抜粋
+        slug: 新しいスラッグ
+    
+    カスタムフィールドの構造:
+    - 表用情報: 表用特徴、表用料金、表用アクセス
+    - 基本情報: 簡易地区、住所、営業時間、定休日、アクセス、駐車場、店舗公式サイト
+    - 料金系情報: h4料金プラン直下、初期費用、体験、価格（配列）
+    - レッスン情報: レッスン時間、レッスン方式（配列）、ジャンル（配列）、取材体験済（配列）、男性利用可否（配列）
+    - 広告強化施策: AFF_URL、目次、ボタン名
+    - 画像類: 画像_説明付（配列）
+    - キャンペーン情報: キャンペーン期間、キャンペーン内容
+    - 関連記事: 関連記事（配列）、体験_ユーチューブ
+    
+    例:
+        フィールドJSON: '{"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜"}'
+    """
+    logger.info(f"pilates_update_post called with ID={投稿ID}")
+    
+    payload: dict = {}
+    if タイトル:
+        payload["title"] = タイトル
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    if status:
+        payload["status"] = _pilates_normalize_single_status(status)
+    
+    fields, error = _pilates_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload.setdefault("meta", {}).update(fields)
+    
+    if not payload:
+        return "更新項目を1つ以上指定してください。"
+    
+    try:
+        post = await _pilates_wp_post(f"{WP_POST_TYPE}/{投稿ID}", payload)
+    except RuntimeError as exc:
+        logger.error("[Pilates] 投稿更新失敗: %s", exc)
+        return f"❌ 更新に失敗しました。\n{exc}"
+    
+    return _pilates_format_post_action_result("✅ pilates-studio 投稿を更新しました", post)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# media-free-content カスタム投稿タイプ用ツール
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ========================================
+# ツール6: media-free-content 一覧取得
+# ========================================
+@mcp.tool()
+async def media_free_content_list(
+    キーワード: str = "",
+    件数: int = 20,
+    status: str = "publish,draft"
+) -> str:
+    """
+    media-free-content カスタム投稿の一覧を取得します（下書き含む）。
+    WordPress 管理画面と同等の情報を取得できます。
+    
+    Args:
+        キーワード: タイトルや本文で検索するキーワード
+        件数: 取得件数 (1-100)
+        status: 取得する投稿ステータス（例: "publish", "draft", "publish,draft"）
+    """
+    logger.info(f"media_free_content_list called with キーワード={キーワード}, 件数={件数}, status={status}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            params = {
+                "per_page": min(max(件数, 1), 100),
+                "status": _build_status_param(status),
+                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+            }
+            
+            if キーワード:
+                params["search"] = キーワード
+            
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
+                params=params,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            # ステータスコードチェック
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"APIエラーが発生しました: {error_data.get('message', 'Unknown error')}"
+            
+            posts = response.json()
+            
+            # レスポンスが配列でない場合のチェック
+            if not isinstance(posts, list):
+                logger.error(f"Unexpected response format: {type(posts)}")
+                return f"予期しないレスポンス形式です"
+            
+            logger.debug(f"Found {len(posts)} posts")
+            
+            if not posts:
+                return "該当する投稿が見つかりませんでした。"
+            
+            result = f"📝 media-free-content 投稿情報（{len(posts)}件）\n\n"
+            
+            for post in posts:
+                status_emoji = get_status_emoji(post.get('status', ''))
+                result += f"━━━━━━━━━━━━━━━━\n"
+                result += f"{status_emoji} {post['title']['rendered']}\n"
+                result += f"🆔 ID: {post['id']} | ステータス: {post.get('status', '不明')}\n"
+                result += f"📅 日付: {post.get('date', 'N/A')}\n"
+                result += f"🔗 {post['link']}\n\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in media_free_content_list: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール7: media-free-content 詳細取得
+# ========================================
+@mcp.tool()
+async def media_free_content_detail(タイトル: str, status: str = "publish,draft") -> str:
+    """
+    特定のmedia-free-content投稿の詳細情報をすべて取得します（下書き含む）。
+    WordPress 管理画面と同等の情報を取得できます。
+    
+    Args:
+        タイトル: 検索する投稿のタイトル
+        status: 取得する投稿ステータス（例: "publish", "draft", "publish,draft"）
+    """
+    logger.info(f"media_free_content_detail called with タイトル={タイトル}, status={status}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            # 投稿を検索（下書き含む）
+            logger.debug(f"Searching for post: {タイトル}")
+            search_response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
+                params={
+                    "search": タイトル,
+                    "per_page": 1,
+                    "status": _build_status_param(status),
+                    "context": "edit"
+                },
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Search response status: {search_response.status_code}")
+            
+            # ステータスコードチェック
+            if search_response.status_code != 200:
+                error_data = search_response.json() if search_response.text else {}
+                logger.error(f"Search API Error: {search_response.status_code} - {error_data}")
+                return f"APIエラーが発生しました: {error_data.get('message', 'Unknown error')}"
+            
+            posts = search_response.json()
+            
+            # レスポンスが配列でない場合のチェック
+            if not isinstance(posts, list):
+                logger.error(f"Unexpected response format: {type(posts)}")
+                return f"予期しないレスポンス形式です"
+            
+            logger.debug(f"Search results count: {len(posts)}")
+            
+            if not posts:
+                logger.warning(f"No posts found for: {タイトル}")
+                return f"「{タイトル}」が見つかりませんでした。"
+            
+            post_id = posts[0]['id']
+            logger.info(f"Found post ID: {post_id}")
+            
+            # 詳細取得（編集コンテキストで下書きも取得可能に）
+            logger.debug(f"Fetching details for post ID: {post_id}")
+            detail_response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{post_id}",
+                params={"context": "edit"},
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Detail response status: {detail_response.status_code}")
+            
+            # ステータスコードをチェック
+            if detail_response.status_code != 200:
+                logger.error(f"HTTP error: {detail_response.status_code}")
+                return f"エラーが発生しました: HTTPステータス {detail_response.status_code}"
+            
+            post = detail_response.json()
+            logger.debug(f"Post data keys: {post.keys()}")
+            
+            # titleキーが存在するかチェック
+            if 'title' not in post or 'rendered' not in post.get('title', {}):
+                return f"データ形式が正しくありません。"
+            
+            status_emoji = get_status_emoji(post.get('status', ''))
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"{status_emoji} {post['title']['rendered']}\n"
+            result += f"🆔 ID: {post['id']} | ステータス: {post.get('status', '不明')}\n"
+            result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # 本文
+            if post.get('content', {}).get('rendered'):
+                import re
+                content = post['content']['rendered']
+                content = re.sub('<[^<]+?>', '', content)
+                result += f"📝 本文:\n{content.strip()[:1000]}...\n\n"
+            
+            # カスタムフィールド
+            if 'custom_fields' in post:
+                result += "━━━ 🔧 カスタムフィールド ━━━\n\n"
+                fields = post['custom_fields']
+                
+                for key, value in fields.items():
+                    if not key.startswith('_'):  # 内部フィールドを除外
+                        val = value[0] if isinstance(value, list) and value else value
+                        result += f"{key}: {val}\n"
+            
+            result += f"\n🔗 詳細URL: {post['link']}\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in media_free_content_detail: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール8: media-free-content IDで直接取得
+# ========================================
+@mcp.tool()
+async def media_free_content_by_id(投稿ID: int) -> str:
+    """
+    投稿IDを指定してmedia-free-content投稿の情報を取得します（下書き含む）。
+    WordPress 管理画面と同等の情報を取得できます。
+    """
+    logger.info(f"media_free_content_by_id called with ID={投稿ID}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            logger.debug(f"Fetching media-free-content post with ID: {投稿ID}")
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{投稿ID}",
+                params={"context": "edit"},  # 編集コンテキストで下書きも取得可能に
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            # ステータスコードをチェック
+            if response.status_code == 404:
+                return f"ID {投稿ID} の投稿が見つかりませんでした。"
+            
+            if response.status_code != 200:
+                return f"エラーが発生しました: HTTPステータス {response.status_code}"
+            
+            post = response.json()
+            
+            # titleキーが存在するかチェック
+            if 'title' not in post or 'rendered' not in post.get('title', {}):
+                return f"ID {投稿ID} のデータ形式が正しくありません。レスポンス: {post}"
+            
+            status_emoji = get_status_emoji(post.get('status', ''))
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"{status_emoji} {post['title']['rendered']}\n"
+            result += f"🆔 ID: {post['id']} | ステータス: {post.get('status', '不明')}\n"
+            result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # カスタムフィールドをすべて表示
+            if 'custom_fields' in post:
+                result += "【すべてのカスタムフィールド】\n\n"
+                fields = post['custom_fields']
+                
+                for key, value in fields.items():
+                    if not key.startswith('_'):  # 内部フィールドを除外
+                        val = value[0] if isinstance(value, list) and value else value
+                        result += f"{key}: {val}\n"
+            
+            result += f"\n🔗 {post['link']}\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in media_free_content_by_id: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール9: media-free-content カスタムフィールド更新
+# ========================================
+async def _media_free_content_handle_update_tool(
+    *,
+    post_id: int,
+    fields_json: str,
+    container: str,
+    wrap_payload: bool,
+) -> str:
+    """media-free-content カスタムフィールド更新の共通処理"""
+    try:
+        data = json.loads(fields_json)
+    except json.JSONDecodeError as exc:
+        return (
+            "❌ JSONの形式に問題があります。\n"
+            f"エラー: {exc}\n"
+            "例: {\"カスタムフィールド名\": \"値\"}"
+        )
+    
+    if not isinstance(data, dict) or not data:
+        return "❌ JSONはキーと値を持つオブジェクト形式で指定してください。"
+    
+    container = (container or "meta").strip()
+    wrap_payload = bool(wrap_payload)
+    
+    if wrap_payload:
+        # containerでラップして送信
+        if container not in ("custom_fields", "meta", "acf"):
+            return (
+                f"❌ container='{container}' はサポートされていません。"
+                " 使用可能: custom_fields / meta / acf"
+            )
+        payload = {container: data}
+        summary_fields = data
+        field_group = f"media-free-content:{container}"
+    else:
+        # そのまま送信
+        payload = data
+        summary_fields = data
+        field_group = "media-free-content:raw"
+    
+    logger.info(
+        "[MediaFreeContent] 更新開始 id=%s container=%s wrap=%s",
+        post_id,
+        container,
+        wrap_payload,
+    )
+    
+    try:
+        post = await _pilates_wp_post(f"media-free-content/{post_id}", payload)
+    except RuntimeError as exc:
+        logger.error(
+            "[MediaFreeContent] 更新失敗 id=%s : %s",
+            post_id,
+            exc,
+        )
+        return f"❌ 更新に失敗しました。\n{exc}"
+    
+    return _pilates_format_update_summary(post, summary_fields, field_group)
+
+
+@mcp.tool()
+async def media_free_content_update_fields(
+    投稿ID: int,
+    フィールドJSON: str,
+    container: str = "meta",
+    wrap_payload: bool = True,
+) -> str:
+    """
+    media-free-content カスタム投稿のカスタムフィールドを更新します。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID
+        フィールドJSON: {"フィールド名": "値"} 形式のJSON文字列
+        container: custom_fields / meta / acf のいずれか（wrap_payload=True の場合）
+        wrap_payload: True で JSON を container 内に包んで送信、False で JSON をそのまま送信
+    
+    例:
+        フィールドJSON: '{"表示エリア": "塚口", "リード文": "説明文"}'
+    """
+    logger.info(f"media_free_content_update_fields called with ID={投稿ID}")
+    
+    return await _media_free_content_handle_update_tool(
+        post_id=投稿ID,
+        fields_json=フィールドJSON,
+        container=container,
+        wrap_payload=wrap_payload,
+    )
+
+
+def _media_free_content_parse_fields_json(raw: str) -> tuple[dict | None, str | None]:
+    """JSON文字列をパース（media-free-content用）"""
+    if not raw or not raw.strip():
+        return None, None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"❌ JSONの形式が正しくありません: {exc}"
+    if not isinstance(data, dict):
+        return None, "❌ JSONはオブジェクト（Key/Value形式）で指定してください。"
+    return data, None
+
+
+def _media_free_content_normalize_single_status(status: str | None) -> str:
+    """ステータスを正規化（単一ステータス用）"""
+    value = (status or "").strip().lower()
+    if value in ALLOWED_STATUSES:
+        return value
+    return "draft"
+
+
+def _media_free_content_format_post_action_result(action: str, post: dict) -> str:
+    """投稿アクション結果をフォーマット"""
+    title = post.get('title', {}).get('rendered', 'タイトル未設定')
+    status = post.get('status', 'unknown')
+    post_id = post.get('id')
+    link = post.get('link') or ""
+    edit_url = f"{WP_SITE_URL}/wp-admin/post.php?post={post_id}&action=edit" if post_id else "N/A"
+    lines = [
+        action,
+        f"🆔 ID: {post_id} / status: {status}",
+        f"📍 タイトル: {title}",
+        f"🔗 表示URL: {link or 'N/A'}",
+        f"✏️ 編集URL: {edit_url}",
+    ]
+    return "\n".join(lines)
+
+
+# ========================================
+# ツール10: media-free-content 投稿作成
+# ========================================
+@mcp.tool()
+async def media_free_content_create_post(
+    タイトル: str,
+    本文: str = "",
+    status: str = "draft",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    media-free-content カスタム投稿を新規作成します。
+    
+    Args:
+        タイトル: 投稿のタイトル（必須）
+        本文: 投稿の本文
+        status: 投稿ステータス（"publish" または "draft"、デフォルト: "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+            例: '{"表示エリア": "塚口", "リード文": "説明文", "目的セクション": [...]}'
+        抜粋: 投稿の抜粋
+        slug: 投稿のスラッグ
+    
+    カスタムフィールドの構造:
+    - 表示エリア: 文字列（例: "塚口"）
+    - リード文: 文字列
+    - 目的セクション: 配列
+      - 目的名: 文字列
+      - スタジオカード: 配列
+        - 投稿ID: 数値
+        - アクセス: 文字列
+        - 料金: 文字列
+        - 特徴1: 文字列
+        - 特徴2: 文字列
+        - 特徴3: 文字列
+    """
+    logger.info(f"media_free_content_create_post called with タイトル={タイトル}")
+    
+    clean_title = (タイトル or "").strip()
+    if not clean_title:
+        return "タイトルを指定してください。"
+    
+    payload: dict = {
+        "title": clean_title,
+        "status": _media_free_content_normalize_single_status(status),
+    }
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    
+    fields, error = _media_free_content_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload["meta"] = fields
+    
+    try:
+        post = await _pilates_wp_post("media-free-content", payload)
+    except RuntimeError as exc:
+        logger.error("[MediaFreeContent] 投稿作成失敗: %s", exc)
+        return f"❌ 作成に失敗しました。\n{exc}"
+    
+    return _media_free_content_format_post_action_result("✅ media-free-content 投稿を作成しました", post)
+
+
+# ========================================
+# ツール11: media-free-content 投稿更新
+# ========================================
+@mcp.tool()
+async def media_free_content_update_post(
+    投稿ID: int,
+    タイトル: str = "",
+    本文: str = "",
+    status: str = "",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    media-free-content 投稿のタイトル / 本文 / ステータス / メタ情報を更新します。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID（必須）
+        タイトル: 新しいタイトル
+        本文: 新しい本文
+        status: 新しいステータス（"publish" または "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+            例: '{"表示エリア": "塚口", "リード文": "説明文"}'
+        抜粋: 新しい抜粋
+        slug: 新しいスラッグ
+    
+    カスタムフィールドの構造:
+    - 表示エリア: 文字列
+    - リード文: 文字列
+    - 目的セクション: 配列（ネストされた構造）
+    """
+    logger.info(f"media_free_content_update_post called with ID={投稿ID}")
+    
+    payload: dict = {}
+    if タイトル:
+        payload["title"] = タイトル
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    if status:
+        payload["status"] = _media_free_content_normalize_single_status(status)
+    
+    fields, error = _media_free_content_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload.setdefault("meta", {}).update(fields)
+    
+    if not payload:
+        return "更新項目を1つ以上指定してください。"
+    
+    try:
+        post = await _pilates_wp_post(f"media-free-content/{投稿ID}", payload)
+    except RuntimeError as exc:
+        logger.error("[MediaFreeContent] 投稿更新失敗: %s", exc)
+        return f"❌ 更新に失敗しました。\n{exc}"
+    
+    return _media_free_content_format_post_action_result("✅ media-free-content 投稿を更新しました", post)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 通常投稿（posts）用ツール
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ========================================
+# ツール14: 通常投稿作成
+# ========================================
+@mcp.tool()
+async def post_create(
+    タイトル: str,
+    本文: str = "",
+    status: str = "draft",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    通常投稿（post）を新規作成します。
+    
+    Args:
+        タイトル: 投稿のタイトル（必須）
+        本文: 投稿の本文
+        status: 投稿ステータス（"publish" または "draft"、デフォルト: "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+        抜粋: 投稿の抜粋
+        slug: 投稿のスラッグ
+    
+    例:
+        フィールドJSON: '{"カスタムフィールド名": "値"}'
+    """
+    logger.info(f"post_create called with タイトル={タイトル}")
+    
+    clean_title = (タイトル or "").strip()
+    if not clean_title:
+        return "タイトルを指定してください。"
+    
+    payload: dict = {
+        "title": clean_title,
+        "status": _pilates_normalize_single_status(status),
+    }
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    
+    fields, error = _pilates_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload["meta"] = fields
+    
+    try:
+        post = await _pilates_wp_post("posts", payload)
+    except RuntimeError as exc:
+        logger.error("[Posts] 投稿作成失敗: %s", exc)
+        return f"❌ 作成に失敗しました。\n{exc}"
+    
+    return _pilates_format_post_action_result("✅ 通常投稿を作成しました", post)
+
+
+# ========================================
+# ツール15: 通常投稿更新
+# ========================================
+@mcp.tool()
+async def post_update(
+    投稿ID: int,
+    タイトル: str = "",
+    本文: str = "",
+    status: str = "",
+    フィールドJSON: str = "",
+    抜粋: str = "",
+    slug: str = ""
+) -> str:
+    """
+    通常投稿（post）のタイトル / 本文 / ステータス / メタ情報を更新します。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID（必須）
+        タイトル: 新しいタイトル
+        本文: 新しい本文
+        status: 新しいステータス（"publish" または "draft"）
+        フィールドJSON: カスタムフィールドのJSON文字列
+        抜粋: 新しい抜粋
+        slug: 新しいスラッグ
+    
+    例:
+        フィールドJSON: '{"カスタムフィールド名": "値"}'
+    """
+    logger.info(f"post_update called with ID={投稿ID}")
+    
+    payload: dict = {}
+    if タイトル:
+        payload["title"] = タイトル
+    if 本文:
+        payload["content"] = 本文
+    if 抜粋:
+        payload["excerpt"] = 抜粋
+    if slug:
+        payload["slug"] = slug
+    if status:
+        payload["status"] = _pilates_normalize_single_status(status)
+    
+    fields, error = _pilates_parse_fields_json(フィールドJSON)
+    if error:
+        return error
+    if fields:
+        payload.setdefault("meta", {}).update(fields)
+    
+    if not payload:
+        return "更新項目を1つ以上指定してください。"
+    
+    try:
+        post = await _pilates_wp_post(f"posts/{投稿ID}", payload)
+    except RuntimeError as exc:
+        logger.error("[Posts] 投稿更新失敗: %s", exc)
+        return f"❌ 更新に失敗しました。\n{exc}"
+    
+    return _pilates_format_post_action_result("✅ 通常投稿を更新しました", post)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
