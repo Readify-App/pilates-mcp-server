@@ -121,12 +121,9 @@ async def pilates_list(
             
             params = {
                 "per_page": min(max(件数, 1), 100),
-                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+                "context": "edit",  # 編集コンテキストで下書きも取得可能に
+                "status": _build_status_param(status)  # カンマ区切りで複数ステータスを指定可能
             }
-            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
-            status_param = _build_status_param(status)
-            if status_param and "," not in status_param:
-                params["status"] = status_param
             
             if search_query:
                 params["search"] = search_query
@@ -141,9 +138,11 @@ async def pilates_list(
             logger.debug(f"Response status: {response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if response.status_code == 403 or (response.status_code != 200 and "権限" in str(response.text)):
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 params.pop("context", None)
+                # statusパラメータも削除（権限がない場合は公開済みのみ取得）
+                params.pop("status", None)
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                     params=params,
@@ -229,12 +228,9 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
             search_params = {
                 "search": 店舗名,
                 "per_page": 1,
-                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+                "context": "edit",  # 編集コンテキストで下書きも取得可能に
+                "status": _build_status_param(status)  # カンマ区切りで複数ステータスを指定可能
             }
-            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
-            status_param = _build_status_param(status)
-            if status_param and "," not in status_param:
-                search_params["status"] = status_param
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                 params=search_params,
@@ -245,9 +241,10 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
             logger.debug(f"Search response status: {search_response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if search_response.status_code == 403 or (search_response.status_code != 200 and "権限" in str(search_response.text)):
+            if search_response.status_code in (401, 403) or (search_response.status_code != 200 and ("権限" in str(search_response.text) or "rest_forbidden" in str(search_response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 search_params.pop("context", None)
+                search_params.pop("status", None)
                 search_response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                     params=search_params,
@@ -289,7 +286,7 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
             logger.debug(f"Detail response status: {detail_response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if detail_response.status_code == 403 or (detail_response.status_code != 200 and "権限" in str(detail_response.text)):
+            if detail_response.status_code in (401, 403) or (detail_response.status_code != 200 and ("権限" in str(detail_response.text) or "rest_forbidden" in str(detail_response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 detail_response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{store_id}",
@@ -426,7 +423,7 @@ async def pilates_by_id(投稿ID: int) -> str:
             logger.debug(f"Response status: {response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if response.status_code == 403 or (response.status_code != 200 and "権限" in str(response.text)):
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
@@ -498,12 +495,9 @@ async def pilates_by_area(エリア: str, 件数: int = 10, status: str = "publi
             logger.debug("Fetching all stores for area filtering")
             area_params = {
                 "per_page": 100,
-                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+                "context": "edit",  # 編集コンテキストで下書きも取得可能に
+                "status": _build_status_param(status)  # カンマ区切りで複数ステータスを指定可能
             }
-            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
-            status_param = _build_status_param(status)
-            if status_param and "," not in status_param:
-                area_params["status"] = status_param
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                 params=area_params,
@@ -514,9 +508,10 @@ async def pilates_by_area(エリア: str, 件数: int = 10, status: str = "publi
             logger.debug(f"Response status: {response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if response.status_code == 403 or (response.status_code != 200 and "権限" in str(response.text)):
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 area_params.pop("context", None)
+                area_params.pop("status", None)
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
                     params=area_params,
@@ -933,12 +928,9 @@ async def media_free_content_list(
             
             params = {
                 "per_page": min(max(件数, 1), 100),
-                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+                "context": "edit",  # 編集コンテキストで下書きも取得可能に
+                "status": _build_status_param(status)  # カンマ区切りで複数ステータスを指定可能
             }
-            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
-            status_param = _build_status_param(status)
-            if status_param and "," not in status_param:
-                params["status"] = status_param
             
             if キーワード:
                 params["search"] = キーワード
@@ -953,9 +945,10 @@ async def media_free_content_list(
             logger.debug(f"Response status: {response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if response.status_code == 403 or (response.status_code != 200 and "権限" in str(response.text)):
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 params.pop("context", None)
+                params.pop("status", None)
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
                     params=params,
@@ -1022,12 +1015,9 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
             search_params = {
                 "search": タイトル,
                 "per_page": 1,
-                "context": "edit"  # 編集コンテキストで下書きも取得可能に
+                "context": "edit",  # 編集コンテキストで下書きも取得可能に
+                "status": _build_status_param(status)  # カンマ区切りで複数ステータスを指定可能
             }
-            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
-            status_param = _build_status_param(status)
-            if status_param and "," not in status_param:
-                search_params["status"] = status_param
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
                 params=search_params,
@@ -1038,9 +1028,10 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
             logger.debug(f"Search response status: {search_response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if search_response.status_code == 403 or (search_response.status_code != 200 and "権限" in str(search_response.text)):
+            if search_response.status_code in (401, 403) or (search_response.status_code != 200 and ("権限" in str(search_response.text) or "rest_forbidden" in str(search_response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 search_params.pop("context", None)
+                search_params.pop("status", None)
                 search_response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
                     params=search_params,
@@ -1082,7 +1073,7 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
             logger.debug(f"Detail response status: {detail_response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if detail_response.status_code == 403 or (detail_response.status_code != 200 and "権限" in str(detail_response.text)):
+            if detail_response.status_code in (401, 403) or (detail_response.status_code != 200 and ("権限" in str(detail_response.text) or "rest_forbidden" in str(detail_response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 detail_response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{post_id}",
@@ -1162,7 +1153,7 @@ async def media_free_content_by_id(投稿ID: int) -> str:
             logger.debug(f"Response status: {response.status_code}")
             
             # 権限エラーの場合はcontext=editを削除して再試行
-            if response.status_code == 403 or (response.status_code != 200 and "権限" in str(response.text)):
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
                 logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
                 response = await client.get(
                     f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{投稿ID}",
