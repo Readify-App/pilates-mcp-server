@@ -121,9 +121,12 @@ async def pilates_list(
             
             params = {
                 "per_page": min(max(件数, 1), 100),
-                "status": _build_status_param(status),
                 "context": "edit"  # 編集コンテキストで下書きも取得可能に
             }
+            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
+            status_param = _build_status_param(status)
+            if status_param and "," not in status_param:
+                params["status"] = status_param
             
             if search_query:
                 params["search"] = search_query
@@ -212,14 +215,18 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
             
             # 店舗を検索（下書き含む）
             logger.debug(f"Searching for store: {店舗名}")
+            search_params = {
+                "search": 店舗名,
+                "per_page": 1,
+                "context": "edit"
+            }
+            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
+            status_param = _build_status_param(status)
+            if status_param and "," not in status_param:
+                search_params["status"] = status_param
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
-                params={
-                    "search": 店舗名,
-                    "per_page": 1,
-                    "status": _build_status_param(status),
-                    "context": "edit"
-                },
+                params=search_params,
                 headers=headers,
                 timeout=30.0
             )
@@ -447,13 +454,17 @@ async def pilates_by_area(エリア: str, 件数: int = 10, status: str = "publi
             
             # 全件取得してカスタムフィールドでフィルタリング（下書き含む）
             logger.debug("Fetching all stores for area filtering")
+            area_params = {
+                "per_page": 100,
+                "context": "edit"
+            }
+            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
+            status_param = _build_status_param(status)
+            if status_param and "," not in status_param:
+                area_params["status"] = status_param
             response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}",
-                params={
-                    "per_page": 100,
-                    "status": _build_status_param(status),
-                    "context": "edit"
-                },
+                params=area_params,
                 headers=headers,
                 timeout=30.0
             )
@@ -869,9 +880,12 @@ async def media_free_content_list(
             
             params = {
                 "per_page": min(max(件数, 1), 100),
-                "status": _build_status_param(status),
                 "context": "edit"  # 編集コンテキストで下書きも取得可能に
             }
+            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
+            status_param = _build_status_param(status)
+            if status_param and "," not in status_param:
+                params["status"] = status_param
             
             if キーワード:
                 params["search"] = キーワード
@@ -941,14 +955,18 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
             
             # 投稿を検索（下書き含む）
             logger.debug(f"Searching for post: {タイトル}")
+            search_params = {
+                "search": タイトル,
+                "per_page": 1,
+                "context": "edit"
+            }
+            # statusパラメータは単一値の場合のみ追加（カンマ区切りはWordPress REST APIでサポートされていない）
+            status_param = _build_status_param(status)
+            if status_param and "," not in status_param:
+                search_params["status"] = status_param
             search_response = await client.get(
                 f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content",
-                params={
-                    "search": タイトル,
-                    "per_page": 1,
-                    "status": _build_status_param(status),
-                    "context": "edit"
-                },
+                params=search_params,
                 headers=headers,
                 timeout=30.0
             )
