@@ -1805,12 +1805,17 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
             result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            # 本文
-            if post.get('content', {}).get('rendered'):
-                import re
+            # 本文（完全なHTMLを含む）
+            result += "━━━ 📝 本文 ━━━\n\n"
+            # content.raw（編集用の生のコンテンツ）があればそれを使用、なければrenderedを使用
+            if post.get('content', {}).get('raw'):
+                content = post['content']['raw']
+                result += f"{content}\n\n"
+            elif post.get('content', {}).get('rendered'):
                 content = post['content']['rendered']
-                content = re.sub('<[^<]+?>', '', content)
-                result += f"📝 本文:\n{content.strip()[:1000]}...\n\n"
+                result += f"{content}\n\n"
+            else:
+                result += "本文が見つかりませんでした。\n\n"
             
             # カスタムフィールド（metaまたはcustom_fieldsから取得）
             fields = _get_custom_fields_from_post(post)
@@ -1885,6 +1890,18 @@ async def media_free_content_by_id(投稿ID: int) -> str:
             result += f"🆔 ID: {post['id']} | ステータス: {post.get('status', '不明')}\n"
             result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # 本文（完全なHTMLを含む）
+            result += "━━━ 📝 本文 ━━━\n\n"
+            # content.raw（編集用の生のコンテンツ）があればそれを使用、なければrenderedを使用
+            if post.get('content', {}).get('raw'):
+                content = post['content']['raw']
+                result += f"{content}\n\n"
+            elif post.get('content', {}).get('rendered'):
+                content = post['content']['rendered']
+                result += f"{content}\n\n"
+            else:
+                result += "本文が見つかりませんでした。\n\n"
             
             # カスタムフィールドをすべて表示（完全な構造）
             fields = _get_custom_fields_from_post(post)
@@ -1968,6 +1985,18 @@ async def media_free_content_get_fields_raw(投稿ID: int, include_internal: boo
             result += f"🆔 ID: {post.get('id')} | ステータス: {status}\n"
             result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # 本文（完全なHTMLを含む）
+            result += "━━━ 📝 本文 ━━━\n\n"
+            # content.raw（編集用の生のコンテンツ）があればそれを使用、なければrenderedを使用
+            if post.get('content', {}).get('raw'):
+                content = post['content']['raw']
+                result += f"{content}\n\n"
+            elif post.get('content', {}).get('rendered'):
+                content = post['content']['rendered']
+                result += f"{content}\n\n"
+            else:
+                result += "本文が見つかりませんでした。\n\n"
             
             # カスタムフィールドの完全な構造を取得
             fields = _get_custom_fields_from_post(post)
