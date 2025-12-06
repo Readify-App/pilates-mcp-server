@@ -1068,6 +1068,32 @@ def _pilates_format_post_action_result(action: str, post: dict) -> str:
 # カスタムタクソノミー用ツール
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _normalize_taxonomy_name(taxonomy_name: str) -> str:
+    """
+    タクソノミー名を正規化する。
+    日本語名をスラッグに変換する。
+    
+    Args:
+        taxonomy_name: タクソノミー名（日本語名またはスラッグ）
+    
+    Returns:
+        正規化されたタクソノミースラッグ
+    """
+    # 日本語名からスラッグへのマッピング
+    name_to_slug = {
+        "特徴": "pilates-features",
+        "スタジオ名": "studio_name",
+        "pilates-features": "pilates-features",
+        "studio_name": "studio_name",
+        "studio-name": "studio_name",  # ハイフン形式も受け入れる
+        "pilates_features": "pilates-features",  # アンダースコア形式も受け入れる
+    }
+    
+    normalized = name_to_slug.get(taxonomy_name.strip(), taxonomy_name.strip())
+    logger.debug(f"Taxonomy name normalized: '{taxonomy_name}' -> '{normalized}'")
+    return normalized
+
+
 # ========================================
 # ツール16: タクソノミーのターム一覧取得
 # ========================================
@@ -1077,13 +1103,16 @@ async def pilates_get_taxonomy_terms(タクソノミー名: str, 件数: int = 1
     指定したタクソノミーのターム一覧を取得します。
     
     Args:
-        タクソノミー名: 取得するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        タクソノミー名: 取得するタクソノミーの名前（例: "特徴", "スタジオ名", "pilates-features", "studio_name"）
         件数: 取得件数（デフォルト: 100）
     
     例:
-        タクソノミー名: "特徴" または "スタジオ名"
+        タクソノミー名: "特徴" または "スタジオ名" または "pilates-features" または "studio_name"
     """
     logger.info(f"pilates_get_taxonomy_terms called with タクソノミー名={タクソノミー名}, 件数={件数}")
+    
+    # タクソノミー名を正規化（スラッグに変換）
+    taxonomy_slug = _normalize_taxonomy_name(タクソノミー名)
     
     async with httpx.AsyncClient() as client:
         try:
@@ -1095,7 +1124,7 @@ async def pilates_get_taxonomy_terms(タクソノミー名: str, 件数: int = 1
             }
             
             response = await client.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/{タクソノミー名}",
+                f"{WP_SITE_URL}/wp-json/wp/v2/{taxonomy_slug}",
                 params=params,
                 headers=headers,
                 timeout=30.0
@@ -1117,9 +1146,9 @@ async def pilates_get_taxonomy_terms(タクソノミー名: str, 件数: int = 1
             logger.debug(f"Found {len(terms)} terms")
             
             if not terms:
-                return f"「{タクソノミー名}」タクソノミーのタームが見つかりませんでした。"
+                return f"「{タクソノミー名}」（スラッグ: {taxonomy_slug}）タクソノミーのタームが見つかりませんでした。"
             
-            result = f"🏷️ {タクソノミー名} タクソノミーのターム一覧（{len(terms)}件）\n\n"
+            result = f"🏷️ {タクソノミー名} タクソノミー（スラッグ: {taxonomy_slug}）のターム一覧（{len(terms)}件）\n\n"
             
             for term in terms:
                 result += f"━━━━━━━━━━━━━━━━\n"
@@ -1187,18 +1216,18 @@ async def pilates_get_post_taxonomy_terms(投稿ID: int, タクソノミー名: 
             
             # タクソノミー情報を取得
             if タクソノミー名:
-                # 特定のタクソノミーのみ
-                taxonomy_key = タクソノミー名
-                if taxonomy_key in post:
-                    terms = post[taxonomy_key]
+                # 特定のタクソノミーのみ（スラッグに変換）
+                taxonomy_slug = _normalize_taxonomy_name(タクソノミー名)
+                if taxonomy_slug in post:
+                    terms = post[taxonomy_slug]
                     if terms:
-                        result += f"🏷️ {タクソノミー名} タクソノミー:\n\n"
+                        result += f"🏷️ {タクソノミー名} タクソノミー（スラッグ: {taxonomy_slug}）:\n\n"
                         for term in terms:
                             result += f"  • ID: {term.get('id')} | 名前: {term.get('name')} | スラッグ: {term.get('slug', 'N/A')}\n"
                     else:
-                        result += f"🏷️ {タクソノミー名} タクソノミー: タームが設定されていません\n"
+                        result += f"🏷️ {タクソノミー名} タクソノミー（スラッグ: {taxonomy_slug}）: タームが設定されていません\n"
                 else:
-                    result += f"⚠️ {タクソノミー名} タクソノミーが見つかりませんでした。\n"
+                    result += f"⚠️ {タクソノミー名} タクソノミー（スラッグ: {taxonomy_slug}）が見つかりませんでした。\n"
                     result += f"利用可能なキー: {', '.join([k for k in post.keys() if not k.startswith('_')])}\n"
             else:
                 # すべてのタクソノミー
@@ -1237,13 +1266,13 @@ async def pilates_create_taxonomy_term(
     指定したタクソノミーに新しいタームを作成します。
     
     Args:
-        タクソノミー名: タームを追加するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        タクソノミー名: タームを追加するタクソノミーの名前（例: "特徴", "スタジオ名", "pilates-features", "studio_name"）
         ターム名: 作成するタームの名前（必須）
         スラッグ: タームのスラッグ（空の場合はターム名から自動生成）
         説明: タームの説明
     
     例:
-        タクソノミー名: "特徴"
+        タクソノミー名: "特徴" または "pilates-features"
         ターム名: "マシンピラティス"
     """
     logger.info(f"pilates_create_taxonomy_term called with タクソノミー名={タクソノミー名}, ターム名={ターム名}")
@@ -1251,6 +1280,9 @@ async def pilates_create_taxonomy_term(
     clean_term_name = (ターム名 or "").strip()
     if not clean_term_name:
         return "ターム名を指定してください。"
+    
+    # タクソノミー名を正規化（スラッグに変換）
+    taxonomy_slug = _normalize_taxonomy_name(タクソノミー名)
     
     async with httpx.AsyncClient() as client:
         try:
@@ -1265,7 +1297,7 @@ async def pilates_create_taxonomy_term(
                 payload["description"] = 説明
             
             response = await client.post(
-                f"{WP_SITE_URL}/wp-json/wp/v2/{タクソノミー名}",
+                f"{WP_SITE_URL}/wp-json/wp/v2/{taxonomy_slug}",
                 json=payload,
                 headers=headers,
                 timeout=30.0
@@ -1282,7 +1314,7 @@ async def pilates_create_taxonomy_term(
             term = response.json()
             
             result = f"✅ タームを作成しました\n\n"
-            result += f"🏷️ タクソノミー: {タクソノミー名}\n"
+            result += f"🏷️ タクソノミー: {タクソノミー名}（スラッグ: {taxonomy_slug}）\n"
             result += f"🆔 ID: {term.get('id')}\n"
             result += f"📝 名前: {term.get('name')}\n"
             result += f"🔗 スラッグ: {term.get('slug', 'N/A')}\n"
@@ -1312,20 +1344,23 @@ async def pilates_update_post_taxonomy_terms(
     
     Args:
         投稿ID: 更新対象の投稿ID
-        タクソノミー名: 更新するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        タクソノミー名: 更新するタクソノミーの名前（例: "特徴", "スタジオ名", "pilates-features", "studio_name"）
         タームIDリスト: タームIDのカンマ区切りリスト（例: "1,2,3"）
         ターム名リスト: ターム名のカンマ区切りリスト（例: "マシンピラティス,マットピラティス"）
     
     注意: タームIDリストとターム名リストの両方を指定した場合、タームIDリストが優先されます。
     
     例:
-        タクソノミー名: "特徴"
+        タクソノミー名: "特徴" または "pilates-features"
         ターム名リスト: "マシンピラティス,マットピラティス"
     """
     logger.info(f"pilates_update_post_taxonomy_terms called with 投稿ID={投稿ID}, タクソノミー名={タクソノミー名}")
     
     if not タームIDリスト and not ターム名リスト:
         return "タームIDリストまたはターム名リストを指定してください。"
+    
+    # タクソノミー名を正規化（スラッグに変換）
+    taxonomy_slug = _normalize_taxonomy_name(タクソノミー名)
     
     async with httpx.AsyncClient() as client:
         try:
@@ -1335,11 +1370,11 @@ async def pilates_update_post_taxonomy_terms(
             if タームIDリスト:
                 # タームIDリストを使用
                 term_ids = [int(tid.strip()) for tid in タームIDリスト.split(",") if tid.strip()]
-                payload = {タクソノミー名: term_ids}
+                payload = {taxonomy_slug: term_ids}
             else:
                 # ターム名リストを使用
                 term_names = [name.strip() for name in ターム名リスト.split(",") if name.strip()]
-                payload = {タクソノミー名: term_names}
+                payload = {taxonomy_slug: term_names}
             
             response = await client.post(
                 f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
@@ -1360,12 +1395,12 @@ async def pilates_update_post_taxonomy_terms(
             title = post.get('title', {}).get('rendered', 'タイトル未設定')
             
             # 更新後のタームを取得
-            updated_terms = post.get(タクソノミー名, [])
+            updated_terms = post.get(taxonomy_slug, [])
             
             result = f"✅ タクソノミータームを更新しました\n\n"
             result += f"📝 投稿: {title}\n"
             result += f"🆔 投稿ID: {投稿ID}\n"
-            result += f"🏷️ タクソノミー: {タクソノミー名}\n\n"
+            result += f"🏷️ タクソノミー: {タクソノミー名}（スラッグ: {taxonomy_slug}）\n\n"
             result += f"設定されたターム:\n"
             
             if updated_terms:
@@ -1449,20 +1484,20 @@ async def pilates_create_post(
     if fields:
         payload["meta"] = fields
     
-    # タクソノミータームの設定
+    # タクソノミータームの設定（スラッグを使用）
     if 特徴タームIDリスト:
         term_ids = [int(tid.strip()) for tid in 特徴タームIDリスト.split(",") if tid.strip()]
-        payload["特徴"] = term_ids
+        payload["pilates-features"] = term_ids
     elif 特徴ターム名リスト:
         term_names = [name.strip() for name in 特徴ターム名リスト.split(",") if name.strip()]
-        payload["特徴"] = term_names
+        payload["pilates-features"] = term_names
     
     if スタジオ名タームIDリスト:
         term_ids = [int(tid.strip()) for tid in スタジオ名タームIDリスト.split(",") if tid.strip()]
-        payload["スタジオ名"] = term_ids
+        payload["studio_name"] = term_ids
     elif スタジオ名ターム名リスト:
         term_names = [name.strip() for name in スタジオ名ターム名リスト.split(",") if name.strip()]
-        payload["スタジオ名"] = term_names
+        payload["studio_name"] = term_names
     
     try:
         post = await _pilates_wp_post(WP_POST_TYPE, payload)
@@ -1540,20 +1575,20 @@ async def pilates_update_post(
     if fields:
         payload.setdefault("meta", {}).update(fields)
     
-    # タクソノミータームの設定
+    # タクソノミータームの設定（スラッグを使用）
     if 特徴タームIDリスト:
         term_ids = [int(tid.strip()) for tid in 特徴タームIDリスト.split(",") if tid.strip()]
-        payload["特徴"] = term_ids
+        payload["pilates-features"] = term_ids
     elif 特徴ターム名リスト:
         term_names = [name.strip() for name in 特徴ターム名リスト.split(",") if name.strip()]
-        payload["特徴"] = term_names
+        payload["pilates-features"] = term_names
     
     if スタジオ名タームIDリスト:
         term_ids = [int(tid.strip()) for tid in スタジオ名タームIDリスト.split(",") if tid.strip()]
-        payload["スタジオ名"] = term_ids
+        payload["studio_name"] = term_ids
     elif スタジオ名ターム名リスト:
         term_names = [name.strip() for name in スタジオ名ターム名リスト.split(",") if name.strip()]
-        payload["スタジオ名"] = term_names
+        payload["studio_name"] = term_names
     
     if not payload:
         return "更新項目を1つ以上指定してください。"
