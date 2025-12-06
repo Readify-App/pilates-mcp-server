@@ -85,6 +85,107 @@ def _build_status_param(arg: str | None = None) -> str:
     
     return ",".join(ordered_unique)
 
+
+def _get_custom_fields_from_post(post_data: dict) -> dict:
+    """
+    投稿データからカスタムフィールドを取得する。
+    WordPress REST APIでは、カスタムフィールドは以下のいずれかの形式で返される：
+    1. `meta`キー内（従来の方法）
+    2. `custom_fields`キー内（一部のプラグイン）
+    3. ルートレベルに直接（register_post_meta()でshow_in_rest => trueを設定した場合）
+    
+    すべてをチェックして、存在するものを統合して返す。
+    """
+    result = {}
+    
+    # 1. custom_fieldsをチェック（一部のプラグインが使用）
+    if 'custom_fields' in post_data and post_data['custom_fields']:
+        logger.debug(f"Found custom_fields with {len(post_data['custom_fields'])} fields")
+        result.update(post_data['custom_fields'])
+    
+    # 2. metaをチェック（WordPress標準）
+    if 'meta' in post_data and post_data['meta']:
+        logger.debug(f"Found meta with {len(post_data['meta'])} fields")
+        result.update(post_data['meta'])
+    
+    # 3. ルートレベルからカスタムフィールドを抽出
+    # register_post_meta()でshow_in_rest => trueを設定したフィールドはルートレベルに直接含まれる
+    known_custom_fields = [
+        # 表用情報
+        '表用特徴', '表用料金', '表用アクセス',
+        # 基本情報
+        '簡易地区', '住所', '営業時間', '定休日', 'アクセス', '駐車場', '店舗公式サイト',
+        # 料金系情報
+        'h4料金プラン直下', '初期費用', '体験', '価格',
+        # レッスン情報
+        'レッスン時間', 'レッスン方式', 'ジャンル', '取材体験済', '男性利用可否',
+        # 広告強化施策
+        'AFF_URL', '目次', 'ボタン名',
+        # 画像類
+        '画像_説明付',
+        # キャンペーン情報
+        'キャンペーン期間', 'キャンペーン内容',
+        # 関連記事
+        '関連記事', '体験_ユーチューブ',
+    ]
+    
+    # 標準的なWordPress REST APIのキー（カスタムフィールドではない）
+    standard_keys = {
+        'id', 'date', 'date_gmt', 'guid', 'modified', 'modified_gmt', 'slug', 'status',
+        'type', 'link', 'title', 'content', 'excerpt', 'author', 'featured_media',
+        'comment_status', 'ping_status', 'sticky', 'template', 'format', 'meta',
+        'categories', 'tags', 'custom_fields', 'yoast_head', 'yoast_head_json',
+        '_links', 'acf', 'jetpack_featured_media_url', 'jetpack_shortlink',
+        'jetpack_sharing_enabled', 'jetpack_likes_enabled', 'publicize_connections',
+        'featured_image', 'permalink_template', 'generated_slug', 'parent',
+        'menu_order', 'taxonomy', 'description', 'count', 'name', 'slug',
+        'taxonomy', 'term_group', 'term_taxonomy_id', 'term_id', 'filter',
+        'rendered', 'protected', 'raw'
+    }
+    
+    # ルートレベルからカスタムフィールドを抽出
+    for key, value in post_data.items():
+        # 標準キーでなく、既知のカスタムフィールド名と一致する場合
+        if key not in standard_keys and (key in known_custom_fields or not key.startswith('_')):
+            # まだresultに含まれていない場合のみ追加
+            if key not in result:
+                result[key] = value
+                logger.debug(f"Found custom field at root level: {key}")
+    
+    if result:
+        logger.debug(f"Total custom fields found: {len(result)}")
+        return result
+    
+    # どちらも存在しない場合
+    logger.debug("No custom_fields or meta found in post data")
+    logger.debug(f"Available keys in post data: {list(post_data.keys())}")
+    return {}
+
+
+def _format_fields_for_display(fields: dict, include_internal: bool = False) -> str:
+    """
+    カスタムフィールドを表示用にフォーマットする。
+    完全な構造（ネストされた配列など）を保持する。
+    """
+    if not fields:
+        return "カスタムフィールドが見つかりませんでした。"
+    
+    result = "【カスタムフィールド（完全な構造）】\n\n"
+    
+    for key, value in fields.items():
+        if not include_internal and key.startswith('_'):
+            continue
+        
+        # 完全な構造をJSON形式で表示
+        try:
+            formatted_value = json.dumps(value, ensure_ascii=False, indent=2)
+            result += f"{key}:\n{formatted_value}\n\n"
+        except Exception as e:
+            # JSON化できない場合は文字列として表示
+            result += f"{key}: {str(value)}\n\n"
+    
+    return result
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ツール定義
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -320,9 +421,9 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
                 content = re.sub('<[^<]+?>', '', content)
                 result += f"📝 説明:\n{content.strip()[:500]}...\n\n"
             
-            # カスタムフィールド
-            if 'custom_fields' in store:
-                fields = store['custom_fields']
+            # カスタムフィールド（metaまたはcustom_fieldsから取得）
+            fields = _get_custom_fields_from_post(store)
+            if fields:
                 
                 # 基本情報
                 result += "━━━ 📍 基本情報 ━━━\n\n"
@@ -352,6 +453,13 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
                 # 料金情報
                 result += "\n━━━ 💰 料金情報 ━━━\n\n"
                 
+                if 'h4料金プラン直下' in fields:
+                    price_plan = fields['h4料金プラン直下']
+                    if isinstance(price_plan, list):
+                        result += f"📋 料金プラン: {json.dumps(price_plan, ensure_ascii=False, indent=2)}\n\n"
+                    else:
+                        result += f"📋 料金プラン: {price_plan}\n\n"
+                
                 if '初期費用' in fields:
                     init_cost = fields['初期費用'][0] if isinstance(fields['初期費用'], list) else fields['初期費用']
                     result += f"初期費用: {init_cost}\n"
@@ -362,21 +470,82 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
                     price_summary = fields['表用料金'][0] if isinstance(fields['表用料金'], list) else fields['表用料金']
                     result += f"料金目安: {price_summary}\n"
                 
+                # 価格（配列）の表示
+                if '価格' in fields:
+                    price_data = fields['価格']
+                    result += f"\n💵 価格詳細:\n"
+                    if isinstance(price_data, list):
+                        # 配列の場合、完全な構造をJSON形式で表示
+                        result += json.dumps(price_data, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{price_data}"
+                    result += f"\n"
+                
                 # レッスン情報
                 result += "\n━━━ 🏃 レッスン情報 ━━━\n\n"
                 
                 if 'レッスン時間' in fields:
                     lesson_time = fields['レッスン時間'][0] if isinstance(fields['レッスン時間'], list) else fields['レッスン時間']
                     result += f"⏱️ レッスン時間: {lesson_time}\n"
+                
                 if 'レッスン方式' in fields:
-                    lesson_type = fields['レッスン方式'][0] if isinstance(fields['レッスン方式'], list) else fields['レッスン方式']
-                    result += f"📋 レッスン方式: {lesson_type}\n"
+                    lesson_type = fields['レッスン方式']
+                    result += f"📋 レッスン方式:\n"
+                    if isinstance(lesson_type, list):
+                        result += json.dumps(lesson_type, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{lesson_type}"
+                    result += f"\n\n"
+                
                 if 'ジャンル' in fields:
-                    genre = fields['ジャンル'][0] if isinstance(fields['ジャンル'], list) else fields['ジャンル']
-                    result += f"🎯 ジャンル: {genre}\n"
+                    genre = fields['ジャンル']
+                    result += f"🎯 ジャンル:\n"
+                    if isinstance(genre, list):
+                        result += json.dumps(genre, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{genre}"
+                    result += f"\n\n"
+                
                 if '男性利用可否' in fields:
-                    male = fields['男性利用可否'][0] if isinstance(fields['男性利用可否'], list) else fields['男性利用可否']
-                    result += f"👨 男性利用: {male}\n"
+                    male = fields['男性利用可否']
+                    result += f"👨 男性利用可否:\n"
+                    if isinstance(male, list):
+                        result += json.dumps(male, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{male}"
+                    result += f"\n\n"
+                
+                if '取材体験済' in fields:
+                    experience = fields['取材体験済']
+                    result += f"📝 取材体験済:\n"
+                    if isinstance(experience, list):
+                        result += json.dumps(experience, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{experience}"
+                    result += f"\n\n"
+                
+                # 画像類
+                if '画像_説明付' in fields:
+                    images = fields['画像_説明付']
+                    result += "\n━━━ 🖼️ 画像情報 ━━━\n\n"
+                    if isinstance(images, list):
+                        result += json.dumps(images, ensure_ascii=False, indent=2)
+                    else:
+                        result += f"{images}"
+                    result += f"\n\n"
+                
+                # 広告強化施策
+                if 'AFF_URL' in fields or '目次' in fields or 'ボタン名' in fields:
+                    result += "\n━━━ 📢 広告強化施策 ━━━\n\n"
+                    if 'AFF_URL' in fields:
+                        aff_url = fields['AFF_URL'][0] if isinstance(fields['AFF_URL'], list) else fields['AFF_URL']
+                        result += f"🔗 AFF_URL: {aff_url}\n"
+                    if '目次' in fields:
+                        toc = fields['目次'][0] if isinstance(fields['目次'], list) else fields['目次']
+                        result += f"📑 目次: {toc}\n"
+                    if 'ボタン名' in fields:
+                        button = fields['ボタン名'][0] if isinstance(fields['ボタン名'], list) else fields['ボタン名']
+                        result += f"🔘 ボタン名: {button}\n"
                 
                 # キャンペーン情報
                 if 'キャンペーン内容' in fields or 'キャンペーン期間' in fields:
@@ -387,6 +556,24 @@ async def pilates_detail(店舗名: str, status: str = "publish,draft") -> str:
                     if 'キャンペーン内容' in fields:
                         campaign = fields['キャンペーン内容'][0] if isinstance(fields['キャンペーン内容'], list) else fields['キャンペーン内容']
                         result += f"内容: {campaign}\n"
+                
+                # 関連記事
+                if '関連記事' in fields or '体験_ユーチューブ' in fields:
+                    result += "\n━━━ 🔗 関連情報 ━━━\n\n"
+                    if '関連記事' in fields:
+                        related = fields['関連記事']
+                        result += f"📰 関連記事:\n"
+                        if isinstance(related, list):
+                            result += json.dumps(related, ensure_ascii=False, indent=2)
+                        else:
+                            result += f"{related}"
+                        result += f"\n\n"
+                    if '体験_ユーチューブ' in fields:
+                        youtube = fields['体験_ユーチューブ'][0] if isinstance(fields['体験_ユーチューブ'], list) else fields['体験_ユーチューブ']
+                        result += f"🎥 体験_ユーチューブ: {youtube}\n"
+            else:
+                result += "\n⚠️ カスタムフィールドが見つかりませんでした。\n"
+                result += f"完全な構造を取得するには、`pilates_get_fields_raw`ツール（投稿ID: {store.get('id')}）を使用してください。\n"
             
             result += f"\n🔗 詳細URL: {store['link']}\n"
             
@@ -469,6 +656,7 @@ async def pilates_by_id(投稿ID: int) -> str:
                     return f"エラーが発生しました: HTTPステータス {response.status_code}"
             
             store = response.json()
+            logger.debug(f"Store data keys: {list(store.keys())}")
             
             # titleキーが存在するかチェック
             if 'title' not in store or 'rendered' not in store.get('title', {}):
@@ -480,15 +668,14 @@ async def pilates_by_id(投稿ID: int) -> str:
             result += f"🆔 ID: {store['id']} | ステータス: {store.get('status', '不明')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            # カスタムフィールドをすべて表示
-            if 'custom_fields' in store:
-                result += "【すべてのカスタムフィールド】\n\n"
-                fields = store['custom_fields']
-                
-                for key, value in fields.items():
-                    if not key.startswith('_'):  # 内部フィールドを除外
-                        val = value[0] if isinstance(value, list) and value else value
-                        result += f"{key}: {val}\n"
+            # カスタムフィールドをすべて表示（完全な構造）
+            fields = _get_custom_fields_from_post(store)
+            if fields:
+                result += _format_fields_for_display(fields, include_internal=False)
+            else:
+                result += "【カスタムフィールド】\n\n"
+                result += "カスタムフィールドが見つかりませんでした。\n"
+                result += f"利用可能なキー: {', '.join(store.keys())}\n"
             
             result += f"\n🔗 {store['link']}\n"
             
@@ -496,6 +683,94 @@ async def pilates_by_id(投稿ID: int) -> str:
         
         except Exception as e:
             logger.exception(f"Error in pilates_by_id: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール3-2: カスタムフィールドの完全な構造を取得
+# ========================================
+@mcp.tool()
+async def pilates_get_fields_raw(投稿ID: int, include_internal: bool = False) -> str:
+    """
+    ピラティススタジオのカスタムフィールドの完全な構造を取得します。
+    ネストされた配列や複雑な構造も含めて、すべての情報をJSON形式で表示します。
+    WordPress 管理画面と同等の完全な情報を取得できます。
+    
+    Args:
+        投稿ID: 取得対象の投稿ID
+        include_internal: Trueの場合、アンダースコアで始まる内部フィールドも含める（デフォルト: False）
+    
+    戻り値:
+        カスタムフィールドの完全な構造をJSON形式で表示した文字列
+    """
+    logger.info(f"pilates_get_fields_raw called with ID={投稿ID}, include_internal={include_internal}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            logger.debug(f"Fetching pilates studio with ID: {投稿ID}")
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
+                params={"context": "edit"},
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            # 権限エラーの場合はcontext=editを削除して再試行
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
+                logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
+                response = await client.get(
+                    f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
+                    params={},
+                    headers=headers,
+                    timeout=30.0
+                )
+            
+            if response.status_code == 404:
+                return f"ID {投稿ID} のスタジオが見つかりませんでした。"
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"エラーが発生しました: {error_message}"
+            
+            store = response.json()
+            logger.debug(f"Store data keys: {list(store.keys())}")
+            
+            # タイトル情報
+            title = store.get('title', {}).get('rendered', 'タイトル未設定')
+            status = store.get('status', '不明')
+            
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"📝 {title}\n"
+            result += f"🆔 ID: {store.get('id')} | ステータス: {status}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # カスタムフィールドの完全な構造を取得
+            fields = _get_custom_fields_from_post(store)
+            
+            if fields:
+                result += _format_fields_for_display(fields, include_internal=include_internal)
+            else:
+                result += "カスタムフィールドが見つかりませんでした。\n"
+                result += f"利用可能なキー: {', '.join(store.keys())}\n"
+                # デバッグ用：レスポンスの一部を表示
+                result += f"\n【デバッグ情報】\n"
+                result += f"レスポンスのサンプル（最初の5キー）:\n"
+                for i, key in enumerate(list(store.keys())[:5]):
+                    result += f"  - {key}: {type(store[key]).__name__}\n"
+            
+            result += f"\n🔗 {store.get('link', 'N/A')}\n"
+            result += f"✏️ 編集URL: {WP_SITE_URL}/wp-admin/post.php?post={store.get('id')}&action=edit\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_get_fields_raw: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
@@ -789,6 +1064,323 @@ def _pilates_format_post_action_result(action: str, post: dict) -> str:
     return "\n".join(lines)
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# カスタムタクソノミー用ツール
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ========================================
+# ツール16: タクソノミーのターム一覧取得
+# ========================================
+@mcp.tool()
+async def pilates_get_taxonomy_terms(タクソノミー名: str, 件数: int = 100) -> str:
+    """
+    指定したタクソノミーのターム一覧を取得します。
+    
+    Args:
+        タクソノミー名: 取得するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        件数: 取得件数（デフォルト: 100）
+    
+    例:
+        タクソノミー名: "特徴" または "スタジオ名"
+    """
+    logger.info(f"pilates_get_taxonomy_terms called with タクソノミー名={タクソノミー名}, 件数={件数}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            params = {
+                "per_page": min(max(件数, 1), 100),
+                "context": "edit"
+            }
+            
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/{タクソノミー名}",
+                params=params,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"APIエラーが発生しました: {error_data.get('message', 'Unknown error')}"
+            
+            terms = response.json()
+            
+            if not isinstance(terms, list):
+                logger.error(f"Unexpected response format: {type(terms)}")
+                return f"予期しないレスポンス形式です"
+            
+            logger.debug(f"Found {len(terms)} terms")
+            
+            if not terms:
+                return f"「{タクソノミー名}」タクソノミーのタームが見つかりませんでした。"
+            
+            result = f"🏷️ {タクソノミー名} タクソノミーのターム一覧（{len(terms)}件）\n\n"
+            
+            for term in terms:
+                result += f"━━━━━━━━━━━━━━━━\n"
+                result += f"🆔 ID: {term.get('id')}\n"
+                result += f"📝 名前: {term.get('name')}\n"
+                result += f"🔗 スラッグ: {term.get('slug', 'N/A')}\n"
+                result += f"📊 投稿数: {term.get('count', 0)}\n"
+                if term.get('description'):
+                    result += f"📄 説明: {term.get('description')}\n"
+                result += f"\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_get_taxonomy_terms: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール17: 投稿に紐づくタクソノミーターム取得
+# ========================================
+@mcp.tool()
+async def pilates_get_post_taxonomy_terms(投稿ID: int, タクソノミー名: str = "") -> str:
+    """
+    投稿に紐づいているタクソノミーのタームを取得します。
+    
+    Args:
+        投稿ID: 取得対象の投稿ID
+        タクソノミー名: 取得するタクソノミーの名前（空の場合はすべてのタクソノミーを取得）
+    
+    例:
+        タクソノミー名: "特徴" または "スタジオ名"（空の場合はすべて）
+    """
+    logger.info(f"pilates_get_post_taxonomy_terms called with 投稿ID={投稿ID}, タクソノミー名={タクソノミー名}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
+                params={"context": "edit"},
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code == 404:
+                return f"ID {投稿ID} の投稿が見つかりませんでした。"
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"エラーが発生しました: {error_message}"
+            
+            post = response.json()
+            title = post.get('title', {}).get('rendered', 'タイトル未設定')
+            
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"📝 {title}\n"
+            result += f"🆔 投稿ID: {投稿ID}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # タクソノミー情報を取得
+            if タクソノミー名:
+                # 特定のタクソノミーのみ
+                taxonomy_key = タクソノミー名
+                if taxonomy_key in post:
+                    terms = post[taxonomy_key]
+                    if terms:
+                        result += f"🏷️ {タクソノミー名} タクソノミー:\n\n"
+                        for term in terms:
+                            result += f"  • ID: {term.get('id')} | 名前: {term.get('name')} | スラッグ: {term.get('slug', 'N/A')}\n"
+                    else:
+                        result += f"🏷️ {タクソノミー名} タクソノミー: タームが設定されていません\n"
+                else:
+                    result += f"⚠️ {タクソノミー名} タクソノミーが見つかりませんでした。\n"
+                    result += f"利用可能なキー: {', '.join([k for k in post.keys() if not k.startswith('_')])}\n"
+            else:
+                # すべてのタクソノミー
+                result += "🏷️ すべてのタクソノミー:\n\n"
+                found_any = False
+                for key, value in post.items():
+                    # タクソノミーは通常配列で、各要素にid, name, slugなどが含まれる
+                    if isinstance(value, list) and value and isinstance(value[0], dict) and 'id' in value[0] and 'name' in value[0]:
+                        found_any = True
+                        result += f"【{key}】\n"
+                        for term in value:
+                            result += f"  • ID: {term.get('id')} | 名前: {term.get('name')} | スラッグ: {term.get('slug', 'N/A')}\n"
+                        result += f"\n"
+                
+                if not found_any:
+                    result += "タクソノミータームが設定されていません。\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_get_post_taxonomy_terms: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール18: 新しいタームを作成
+# ========================================
+@mcp.tool()
+async def pilates_create_taxonomy_term(
+    タクソノミー名: str,
+    ターム名: str,
+    スラッグ: str = "",
+    説明: str = ""
+) -> str:
+    """
+    指定したタクソノミーに新しいタームを作成します。
+    
+    Args:
+        タクソノミー名: タームを追加するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        ターム名: 作成するタームの名前（必須）
+        スラッグ: タームのスラッグ（空の場合はターム名から自動生成）
+        説明: タームの説明
+    
+    例:
+        タクソノミー名: "特徴"
+        ターム名: "マシンピラティス"
+    """
+    logger.info(f"pilates_create_taxonomy_term called with タクソノミー名={タクソノミー名}, ターム名={ターム名}")
+    
+    clean_term_name = (ターム名 or "").strip()
+    if not clean_term_name:
+        return "ターム名を指定してください。"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            payload: dict = {
+                "name": clean_term_name
+            }
+            if スラッグ:
+                payload["slug"] = スラッグ
+            if 説明:
+                payload["description"] = 説明
+            
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/{タクソノミー名}",
+                json=payload,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code >= 400:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"❌ ターム作成に失敗しました: {error_message}"
+            
+            term = response.json()
+            
+            result = f"✅ タームを作成しました\n\n"
+            result += f"🏷️ タクソノミー: {タクソノミー名}\n"
+            result += f"🆔 ID: {term.get('id')}\n"
+            result += f"📝 名前: {term.get('name')}\n"
+            result += f"🔗 スラッグ: {term.get('slug', 'N/A')}\n"
+            if term.get('description'):
+                result += f"📄 説明: {term.get('description')}\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_create_taxonomy_term: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール19: 投稿にタクソノミータームを追加・更新
+# ========================================
+@mcp.tool()
+async def pilates_update_post_taxonomy_terms(
+    投稿ID: int,
+    タクソノミー名: str,
+    タームIDリスト: str = "",
+    ターム名リスト: str = ""
+) -> str:
+    """
+    投稿にタクソノミーのタームを追加・更新します。
+    タームIDまたはターム名で指定できます。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID
+        タクソノミー名: 更新するタクソノミーの名前（例: "特徴", "スタジオ名"）
+        タームIDリスト: タームIDのカンマ区切りリスト（例: "1,2,3"）
+        ターム名リスト: ターム名のカンマ区切りリスト（例: "マシンピラティス,マットピラティス"）
+    
+    注意: タームIDリストとターム名リストの両方を指定した場合、タームIDリストが優先されます。
+    
+    例:
+        タクソノミー名: "特徴"
+        ターム名リスト: "マシンピラティス,マットピラティス"
+    """
+    logger.info(f"pilates_update_post_taxonomy_terms called with 投稿ID={投稿ID}, タクソノミー名={タクソノミー名}")
+    
+    if not タームIDリスト and not ターム名リスト:
+        return "タームIDリストまたはターム名リストを指定してください。"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            # タームを決定
+            if タームIDリスト:
+                # タームIDリストを使用
+                term_ids = [int(tid.strip()) for tid in タームIDリスト.split(",") if tid.strip()]
+                payload = {タクソノミー名: term_ids}
+            else:
+                # ターム名リストを使用
+                term_names = [name.strip() for name in ターム名リスト.split(",") if name.strip()]
+                payload = {タクソノミー名: term_names}
+            
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/{WP_POST_TYPE}/{投稿ID}",
+                json=payload,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code >= 400:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"❌ ターム更新に失敗しました: {error_message}"
+            
+            post = response.json()
+            title = post.get('title', {}).get('rendered', 'タイトル未設定')
+            
+            # 更新後のタームを取得
+            updated_terms = post.get(タクソノミー名, [])
+            
+            result = f"✅ タクソノミータームを更新しました\n\n"
+            result += f"📝 投稿: {title}\n"
+            result += f"🆔 投稿ID: {投稿ID}\n"
+            result += f"🏷️ タクソノミー: {タクソノミー名}\n\n"
+            result += f"設定されたターム:\n"
+            
+            if updated_terms:
+                for term in updated_terms:
+                    result += f"  • ID: {term.get('id')} | 名前: {term.get('name')}\n"
+            else:
+                result += "  （タームが設定されていません）\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in pilates_update_post_taxonomy_terms: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
 # ========================================
 # ツール12: pilates-studio 投稿作成
 # ========================================
@@ -799,7 +1391,11 @@ async def pilates_create_post(
     status: str = "draft",
     フィールドJSON: str = "",
     抜粋: str = "",
-    slug: str = ""
+    slug: str = "",
+    特徴タームIDリスト: str = "",
+    特徴ターム名リスト: str = "",
+    スタジオ名タームIDリスト: str = "",
+    スタジオ名ターム名リスト: str = ""
 ) -> str:
     """
     ピラティススタジオ カスタム投稿を新規作成します。
@@ -811,6 +1407,10 @@ async def pilates_create_post(
         フィールドJSON: カスタムフィールドのJSON文字列
         抜粋: 投稿の抜粋
         slug: 投稿のスラッグ
+        特徴タームIDリスト: 特徴タクソノミーのタームID（カンマ区切り、例: "1,2,3"）
+        特徴ターム名リスト: 特徴タクソノミーのターム名（カンマ区切り、例: "マシンピラティス,マットピラティス"）
+        スタジオ名タームIDリスト: スタジオ名タクソノミーのタームID（カンマ区切り）
+        スタジオ名ターム名リスト: スタジオ名タクソノミーのターム名（カンマ区切り）
     
     カスタムフィールドの構造:
     - 表用情報: 表用特徴、表用料金、表用アクセス
@@ -824,6 +1424,7 @@ async def pilates_create_post(
     
     例:
         フィールドJSON: '{"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜", "価格": [...]}'
+        特徴ターム名リスト: "マシンピラティス,マットピラティス"
     """
     logger.info(f"pilates_create_post called with タイトル={タイトル}")
     
@@ -848,6 +1449,21 @@ async def pilates_create_post(
     if fields:
         payload["meta"] = fields
     
+    # タクソノミータームの設定
+    if 特徴タームIDリスト:
+        term_ids = [int(tid.strip()) for tid in 特徴タームIDリスト.split(",") if tid.strip()]
+        payload["特徴"] = term_ids
+    elif 特徴ターム名リスト:
+        term_names = [name.strip() for name in 特徴ターム名リスト.split(",") if name.strip()]
+        payload["特徴"] = term_names
+    
+    if スタジオ名タームIDリスト:
+        term_ids = [int(tid.strip()) for tid in スタジオ名タームIDリスト.split(",") if tid.strip()]
+        payload["スタジオ名"] = term_ids
+    elif スタジオ名ターム名リスト:
+        term_names = [name.strip() for name in スタジオ名ターム名リスト.split(",") if name.strip()]
+        payload["スタジオ名"] = term_names
+    
     try:
         post = await _pilates_wp_post(WP_POST_TYPE, payload)
     except RuntimeError as exc:
@@ -868,10 +1484,14 @@ async def pilates_update_post(
     status: str = "",
     フィールドJSON: str = "",
     抜粋: str = "",
-    slug: str = ""
+    slug: str = "",
+    特徴タームIDリスト: str = "",
+    特徴ターム名リスト: str = "",
+    スタジオ名タームIDリスト: str = "",
+    スタジオ名ターム名リスト: str = ""
 ) -> str:
     """
-    ピラティススタジオ 投稿のタイトル / 本文 / ステータス / メタ情報を更新します。
+    ピラティススタジオ 投稿のタイトル / 本文 / ステータス / メタ情報 / タクソノミーを更新します。
     
     Args:
         投稿ID: 更新対象の投稿ID（必須）
@@ -881,6 +1501,10 @@ async def pilates_update_post(
         フィールドJSON: カスタムフィールドのJSON文字列
         抜粋: 新しい抜粋
         slug: 新しいスラッグ
+        特徴タームIDリスト: 特徴タクソノミーのタームID（カンマ区切り、例: "1,2,3"）
+        特徴ターム名リスト: 特徴タクソノミーのターム名（カンマ区切り、例: "マシンピラティス,マットピラティス"）
+        スタジオ名タームIDリスト: スタジオ名タクソノミーのタームID（カンマ区切り）
+        スタジオ名ターム名リスト: スタジオ名タクソノミーのターム名（カンマ区切り）
     
     カスタムフィールドの構造:
     - 表用情報: 表用特徴、表用料金、表用アクセス
@@ -894,6 +1518,7 @@ async def pilates_update_post(
     
     例:
         フィールドJSON: '{"簡易地区": "東京都渋谷区", "表用料金": "月額10,000円〜"}'
+        特徴ターム名リスト: "マシンピラティス,マットピラティス"
     """
     logger.info(f"pilates_update_post called with ID={投稿ID}")
     
@@ -914,6 +1539,21 @@ async def pilates_update_post(
         return error
     if fields:
         payload.setdefault("meta", {}).update(fields)
+    
+    # タクソノミータームの設定
+    if 特徴タームIDリスト:
+        term_ids = [int(tid.strip()) for tid in 特徴タームIDリスト.split(",") if tid.strip()]
+        payload["特徴"] = term_ids
+    elif 特徴ターム名リスト:
+        term_names = [name.strip() for name in 特徴ターム名リスト.split(",") if name.strip()]
+        payload["特徴"] = term_names
+    
+    if スタジオ名タームIDリスト:
+        term_ids = [int(tid.strip()) for tid in スタジオ名タームIDリスト.split(",") if tid.strip()]
+        payload["スタジオ名"] = term_ids
+    elif スタジオ名ターム名リスト:
+        term_names = [name.strip() for name in スタジオ名ターム名リスト.split(",") if name.strip()]
+        payload["スタジオ名"] = term_names
     
     if not payload:
         return "更新項目を1つ以上指定してください。"
@@ -1137,15 +1777,14 @@ async def media_free_content_detail(タイトル: str, status: str = "publish,dr
                 content = re.sub('<[^<]+?>', '', content)
                 result += f"📝 本文:\n{content.strip()[:1000]}...\n\n"
             
-            # カスタムフィールド
-            if 'custom_fields' in post:
+            # カスタムフィールド（metaまたはcustom_fieldsから取得）
+            fields = _get_custom_fields_from_post(post)
+            if fields:
                 result += "━━━ 🔧 カスタムフィールド ━━━\n\n"
-                fields = post['custom_fields']
-                
-                for key, value in fields.items():
-                    if not key.startswith('_'):  # 内部フィールドを除外
-                        val = value[0] if isinstance(value, list) and value else value
-                        result += f"{key}: {val}\n"
+                result += _format_fields_for_display(fields, include_internal=False)
+            else:
+                result += "\n⚠️ カスタムフィールドが見つかりませんでした。\n"
+                result += f"完全な構造を取得するには、`media_free_content_get_fields_raw`ツール（投稿ID: {post.get('id')}）を使用してください。\n"
             
             result += f"\n🔗 詳細URL: {post['link']}\n"
             
@@ -1199,6 +1838,7 @@ async def media_free_content_by_id(投稿ID: int) -> str:
                 return f"エラーが発生しました: HTTPステータス {response.status_code}"
             
             post = response.json()
+            logger.debug(f"Post data keys: {list(post.keys())}")
             
             # titleキーが存在するかチェック
             if 'title' not in post or 'rendered' not in post.get('title', {}):
@@ -1211,15 +1851,14 @@ async def media_free_content_by_id(投稿ID: int) -> str:
             result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
             result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            # カスタムフィールドをすべて表示
-            if 'custom_fields' in post:
-                result += "【すべてのカスタムフィールド】\n\n"
-                fields = post['custom_fields']
-                
-                for key, value in fields.items():
-                    if not key.startswith('_'):  # 内部フィールドを除外
-                        val = value[0] if isinstance(value, list) and value else value
-                        result += f"{key}: {val}\n"
+            # カスタムフィールドをすべて表示（完全な構造）
+            fields = _get_custom_fields_from_post(post)
+            if fields:
+                result += _format_fields_for_display(fields, include_internal=False)
+            else:
+                result += "【カスタムフィールド】\n\n"
+                result += "カスタムフィールドが見つかりませんでした。\n"
+                result += f"利用可能なキー: {', '.join(post.keys())}\n"
             
             result += f"\n🔗 {post['link']}\n"
             
@@ -1227,6 +1866,95 @@ async def media_free_content_by_id(投稿ID: int) -> str:
         
         except Exception as e:
             logger.exception(f"Error in media_free_content_by_id: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール8-2: media-free-content カスタムフィールドの完全な構造を取得
+# ========================================
+@mcp.tool()
+async def media_free_content_get_fields_raw(投稿ID: int, include_internal: bool = False) -> str:
+    """
+    media-free-content カスタム投稿のカスタムフィールドの完全な構造を取得します。
+    ネストされた配列や複雑な構造も含めて、すべての情報をJSON形式で表示します。
+    WordPress 管理画面と同等の完全な情報を取得できます。
+    
+    Args:
+        投稿ID: 取得対象の投稿ID
+        include_internal: Trueの場合、アンダースコアで始まる内部フィールドも含める（デフォルト: False）
+    
+    戻り値:
+        カスタムフィールドの完全な構造をJSON形式で表示した文字列
+    """
+    logger.info(f"media_free_content_get_fields_raw called with ID={投稿ID}, include_internal={include_internal}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            logger.debug(f"Fetching media-free-content post with ID: {投稿ID}")
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{投稿ID}",
+                params={"context": "edit"},
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            # 権限エラーの場合はcontext=editを削除して再試行
+            if response.status_code in (401, 403) or (response.status_code != 200 and ("権限" in str(response.text) or "rest_forbidden" in str(response.text))):
+                logger.warning("context=editで権限エラーが発生。context=editなしで再試行します。")
+                response = await client.get(
+                    f"{WP_SITE_URL}/wp-json/wp/v2/media-free-content/{投稿ID}",
+                    params={},
+                    headers=headers,
+                    timeout=30.0
+                )
+            
+            if response.status_code == 404:
+                return f"ID {投稿ID} の投稿が見つかりませんでした。"
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"エラーが発生しました: {error_message}"
+            
+            post = response.json()
+            logger.debug(f"Post data keys: {list(post.keys())}")
+            
+            # タイトル情報
+            title = post.get('title', {}).get('rendered', 'タイトル未設定')
+            status = post.get('status', '不明')
+            
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"📝 {title}\n"
+            result += f"🆔 ID: {post.get('id')} | ステータス: {status}\n"
+            result += f"📅 公開日: {post.get('date', 'N/A')} | 最終更新: {post.get('modified', 'N/A')}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # カスタムフィールドの完全な構造を取得
+            fields = _get_custom_fields_from_post(post)
+            
+            if fields:
+                result += _format_fields_for_display(fields, include_internal=include_internal)
+            else:
+                result += "カスタムフィールドが見つかりませんでした。\n"
+                result += f"利用可能なキー: {', '.join(post.keys())}\n"
+                # デバッグ用：レスポンスの一部を表示
+                result += f"\n【デバッグ情報】\n"
+                result += f"レスポンスのサンプル（最初の5キー）:\n"
+                for i, key in enumerate(list(post.keys())[:5]):
+                    result += f"  - {key}: {type(post[key]).__name__}\n"
+            
+            result += f"\n🔗 {post.get('link', 'N/A')}\n"
+            result += f"✏️ 編集URL: {WP_SITE_URL}/wp-admin/post.php?post={post.get('id')}&action=edit\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in media_free_content_get_fields_raw: {e}")
             return f"エラーが発生しました: {str(e)}"
 
 
