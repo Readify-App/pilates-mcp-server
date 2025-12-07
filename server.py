@@ -2297,7 +2297,9 @@ async def post_create(
     status: str = "draft",
     フィールドJSON: str = "",
     抜粋: str = "",
-    slug: str = ""
+    slug: str = "",
+    カテゴリーIDリスト: str = "",
+    カテゴリー名リスト: str = ""
 ) -> str:
     """
     通常投稿（post）を新規作成します。
@@ -2309,9 +2311,12 @@ async def post_create(
         フィールドJSON: カスタムフィールドのJSON文字列
         抜粋: 投稿の抜粋
         slug: 投稿のスラッグ
+        カテゴリーIDリスト: カテゴリーIDのカンマ区切りリスト（例: "1,2,3"）
+        カテゴリー名リスト: カテゴリー名のカンマ区切りリスト（例: "技術記事,プログラミング"）
     
     例:
         フィールドJSON: '{"カスタムフィールド名": "値"}'
+        カテゴリー名リスト: "技術記事,プログラミング"
     """
     logger.info(f"post_create called with タイトル={タイトル}")
     
@@ -2336,6 +2341,37 @@ async def post_create(
     if fields:
         payload["meta"] = fields
     
+    # カテゴリーの設定
+    if カテゴリーIDリスト:
+        category_ids = [int(cid.strip()) for cid in カテゴリーIDリスト.split(",") if cid.strip()]
+        payload["categories"] = category_ids
+    elif カテゴリー名リスト:
+        # カテゴリー名からIDを取得
+        async with httpx.AsyncClient() as client:
+            headers = get_auth_headers()
+            category_names = [name.strip() for name in カテゴリー名リスト.split(",") if name.strip()]
+            category_ids = []
+            
+            for cat_name in category_names:
+                search_response = await client.get(
+                    f"{WP_SITE_URL}/wp-json/wp/v2/categories",
+                    params={"search": cat_name, "per_page": 10},
+                    headers=headers,
+                    timeout=30.0
+                )
+                if search_response.status_code == 200:
+                    cats = search_response.json()
+                    matched = None
+                    for cat in cats:
+                        if cat.get('name') == cat_name:
+                            matched = cat
+                            break
+                    if matched:
+                        category_ids.append(matched.get('id'))
+            
+            if category_ids:
+                payload["categories"] = category_ids
+    
     try:
         post = await _pilates_wp_post("posts", payload)
     except RuntimeError as exc:
@@ -2356,10 +2392,12 @@ async def post_update(
     status: str = "",
     フィールドJSON: str = "",
     抜粋: str = "",
-    slug: str = ""
+    slug: str = "",
+    カテゴリーIDリスト: str = "",
+    カテゴリー名リスト: str = ""
 ) -> str:
     """
-    通常投稿（post）のタイトル / 本文 / ステータス / メタ情報を更新します。
+    通常投稿（post）のタイトル / 本文 / ステータス / メタ情報 / カテゴリーを更新します。
     
     Args:
         投稿ID: 更新対象の投稿ID（必須）
@@ -2369,9 +2407,12 @@ async def post_update(
         フィールドJSON: カスタムフィールドのJSON文字列
         抜粋: 新しい抜粋
         slug: 新しいスラッグ
+        カテゴリーIDリスト: カテゴリーIDのカンマ区切りリスト（例: "1,2,3"）
+        カテゴリー名リスト: カテゴリー名のカンマ区切りリスト（例: "技術記事,プログラミング"）
     
     例:
         フィールドJSON: '{"カスタムフィールド名": "値"}'
+        カテゴリー名リスト: "技術記事,プログラミング"
     """
     logger.info(f"post_update called with ID={投稿ID}")
     
@@ -2393,6 +2434,37 @@ async def post_update(
     if fields:
         payload.setdefault("meta", {}).update(fields)
     
+    # カテゴリーの設定
+    if カテゴリーIDリスト:
+        category_ids = [int(cid.strip()) for cid in カテゴリーIDリスト.split(",") if cid.strip()]
+        payload["categories"] = category_ids
+    elif カテゴリー名リスト:
+        # カテゴリー名からIDを取得
+        async with httpx.AsyncClient() as client:
+            headers = get_auth_headers()
+            category_names = [name.strip() for name in カテゴリー名リスト.split(",") if name.strip()]
+            category_ids = []
+            
+            for cat_name in category_names:
+                search_response = await client.get(
+                    f"{WP_SITE_URL}/wp-json/wp/v2/categories",
+                    params={"search": cat_name, "per_page": 10},
+                    headers=headers,
+                    timeout=30.0
+                )
+                if search_response.status_code == 200:
+                    cats = search_response.json()
+                    matched = None
+                    for cat in cats:
+                        if cat.get('name') == cat_name:
+                            matched = cat
+                            break
+                    if matched:
+                        category_ids.append(matched.get('id'))
+            
+            if category_ids:
+                payload["categories"] = category_ids
+    
     if not payload:
         return "更新項目を1つ以上指定してください。"
     
@@ -2403,6 +2475,348 @@ async def post_update(
         return f"❌ 更新に失敗しました。\n{exc}"
     
     return _pilates_format_post_action_result("✅ 通常投稿を更新しました", post)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 通常投稿（posts）カテゴリー用ツール
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ========================================
+# ツール20: カテゴリー一覧取得
+# ========================================
+@mcp.tool()
+async def post_get_categories(件数: int = 100) -> str:
+    """
+    通常投稿のカテゴリー一覧を取得します。
+    
+    Args:
+        件数: 取得件数（デフォルト: 100）
+    
+    例:
+        件数: 50
+    """
+    logger.info(f"post_get_categories called with 件数={件数}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            params = {
+                "per_page": min(max(件数, 1), 100),
+                "context": "edit"
+            }
+            
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/categories",
+                params=params,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"APIエラーが発生しました: {error_data.get('message', 'Unknown error')}"
+            
+            categories = response.json()
+            
+            if not isinstance(categories, list):
+                logger.error(f"Unexpected response format: {type(categories)}")
+                return f"予期しないレスポンス形式です"
+            
+            logger.debug(f"Found {len(categories)} categories")
+            
+            if not categories:
+                return "カテゴリーが見つかりませんでした。"
+            
+            result = f"📂 カテゴリー一覧（{len(categories)}件）\n\n"
+            
+            for category in categories:
+                result += f"━━━━━━━━━━━━━━━━\n"
+                result += f"🆔 ID: {category.get('id')}\n"
+                result += f"📝 名前: {category.get('name')}\n"
+                result += f"🔗 スラッグ: {category.get('slug', 'N/A')}\n"
+                result += f"📊 投稿数: {category.get('count', 0)}\n"
+                if category.get('description'):
+                    result += f"📄 説明: {category.get('description')}\n"
+                if category.get('parent'):
+                    result += f"👆 親カテゴリーID: {category.get('parent')}\n"
+                result += f"\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in post_get_categories: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール21: 投稿に紐づくカテゴリー取得
+# ========================================
+@mcp.tool()
+async def post_get_post_categories(投稿ID: int) -> str:
+    """
+    投稿に紐づいているカテゴリーを取得します。
+    
+    Args:
+        投稿ID: 取得対象の投稿ID
+    """
+    logger.info(f"post_get_post_categories called with 投稿ID={投稿ID}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            response = await client.get(
+                f"{WP_SITE_URL}/wp-json/wp/v2/posts/{投稿ID}",
+                params={"context": "edit"},
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code == 404:
+                return f"ID {投稿ID} の投稿が見つかりませんでした。"
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"エラーが発生しました: {error_message}"
+            
+            post = response.json()
+            title = post.get('title', {}).get('rendered', 'タイトル未設定')
+            
+            result = f"━━━━━━━━━━━━━━━━━━━━\n"
+            result += f"📝 {title}\n"
+            result += f"🆔 投稿ID: {投稿ID}\n"
+            result += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # カテゴリー情報を取得
+            if 'categories' in post and post['categories']:
+                category_ids = post['categories']
+                result += f"📂 カテゴリーID: {', '.join(map(str, category_ids))}\n\n"
+                
+                # カテゴリーの詳細情報を取得
+                if category_ids:
+                    result += "📂 カテゴリー詳細:\n\n"
+                    for cat_id in category_ids:
+                        cat_response = await client.get(
+                            f"{WP_SITE_URL}/wp-json/wp/v2/categories/{cat_id}",
+                            headers=headers,
+                            timeout=30.0
+                        )
+                        if cat_response.status_code == 200:
+                            cat = cat_response.json()
+                            result += f"  • ID: {cat.get('id')} | 名前: {cat.get('name')} | スラッグ: {cat.get('slug', 'N/A')}\n"
+                        else:
+                            result += f"  • ID: {cat_id} (詳細取得失敗)\n"
+            else:
+                result += "📂 カテゴリー: カテゴリーが設定されていません\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in post_get_post_categories: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール22: 新しいカテゴリーを作成
+# ========================================
+@mcp.tool()
+async def post_create_category(
+    カテゴリー名: str,
+    スラッグ: str = "",
+    説明: str = "",
+    親カテゴリーID: int = 0
+) -> str:
+    """
+    新しいカテゴリーを作成します。
+    
+    Args:
+        カテゴリー名: 作成するカテゴリーの名前（必須）
+        スラッグ: カテゴリーのスラッグ（空の場合はカテゴリー名から自動生成）
+        説明: カテゴリーの説明
+        親カテゴリーID: 親カテゴリーのID（0の場合は親なし）
+    
+    例:
+        カテゴリー名: "技術記事"
+        説明: "技術に関する記事"
+    """
+    logger.info(f"post_create_category called with カテゴリー名={カテゴリー名}")
+    
+    clean_category_name = (カテゴリー名 or "").strip()
+    if not clean_category_name:
+        return "カテゴリー名を指定してください。"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            payload: dict = {
+                "name": clean_category_name
+            }
+            if スラッグ:
+                payload["slug"] = スラッグ
+            if 説明:
+                payload["description"] = 説明
+            if 親カテゴリーID and 親カテゴリーID > 0:
+                payload["parent"] = 親カテゴリーID
+            
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/categories",
+                json=payload,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code >= 400:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"❌ カテゴリー作成に失敗しました: {error_message}"
+            
+            category = response.json()
+            
+            result = f"✅ カテゴリーを作成しました\n\n"
+            result += f"🆔 ID: {category.get('id')}\n"
+            result += f"📝 名前: {category.get('name')}\n"
+            result += f"🔗 スラッグ: {category.get('slug', 'N/A')}\n"
+            if category.get('description'):
+                result += f"📄 説明: {category.get('description')}\n"
+            if category.get('parent'):
+                result += f"👆 親カテゴリーID: {category.get('parent')}\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in post_create_category: {e}")
+            return f"エラーが発生しました: {str(e)}"
+
+
+# ========================================
+# ツール23: 投稿にカテゴリーを追加・更新
+# ========================================
+@mcp.tool()
+async def post_update_post_categories(
+    投稿ID: int,
+    カテゴリーIDリスト: str = "",
+    カテゴリー名リスト: str = ""
+) -> str:
+    """
+    投稿にカテゴリーを追加・更新します。
+    カテゴリーIDまたはカテゴリー名で指定できます。
+    
+    Args:
+        投稿ID: 更新対象の投稿ID
+        カテゴリーIDリスト: カテゴリーIDのカンマ区切りリスト（例: "1,2,3"）
+        カテゴリー名リスト: カテゴリー名のカンマ区切りリスト（例: "技術記事,プログラミング"）
+    
+    注意: カテゴリーIDリストとカテゴリー名リストの両方を指定した場合、カテゴリーIDリストが優先されます。
+    
+    例:
+        カテゴリー名リスト: "技術記事,プログラミング"
+    """
+    logger.info(f"post_update_post_categories called with 投稿ID={投稿ID}")
+    
+    if not カテゴリーIDリスト and not カテゴリー名リスト:
+        return "カテゴリーIDリストまたはカテゴリー名リストを指定してください。"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = get_auth_headers()
+            
+            # カテゴリーを決定
+            if カテゴリーIDリスト:
+                # カテゴリーIDリストを使用
+                category_ids = [int(cid.strip()) for cid in カテゴリーIDリスト.split(",") if cid.strip()]
+                payload = {"categories": category_ids}
+            else:
+                # カテゴリー名リストを使用（まず名前からIDを取得する必要がある）
+                category_names = [name.strip() for name in カテゴリー名リスト.split(",") if name.strip()]
+                category_ids = []
+                
+                # 各カテゴリー名からIDを取得
+                for cat_name in category_names:
+                    search_response = await client.get(
+                        f"{WP_SITE_URL}/wp-json/wp/v2/categories",
+                        params={"search": cat_name, "per_page": 10},
+                        headers=headers,
+                        timeout=30.0
+                    )
+                    if search_response.status_code == 200:
+                        cats = search_response.json()
+                        # 完全一致するカテゴリーを探す
+                        matched = None
+                        for cat in cats:
+                            if cat.get('name') == cat_name:
+                                matched = cat
+                                break
+                        if matched:
+                            category_ids.append(matched.get('id'))
+                        else:
+                            logger.warning(f"Category '{cat_name}' not found")
+                    else:
+                        logger.warning(f"Failed to search category '{cat_name}'")
+                
+                if not category_ids:
+                    return f"❌ 指定されたカテゴリー名が見つかりませんでした: {カテゴリー名リスト}"
+                
+                payload = {"categories": category_ids}
+            
+            response = await client.post(
+                f"{WP_SITE_URL}/wp-json/wp/v2/posts/{投稿ID}",
+                json=payload,
+                headers=headers,
+                timeout=30.0
+            )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            
+            if response.status_code >= 400:
+                error_data = response.json() if response.text else {}
+                error_message = error_data.get('message', f'HTTPステータス {response.status_code}')
+                logger.error(f"API Error: {response.status_code} - {error_data}")
+                return f"❌ カテゴリー更新に失敗しました: {error_message}"
+            
+            post = response.json()
+            title = post.get('title', {}).get('rendered', 'タイトル未設定')
+            
+            # 更新後のカテゴリーを取得
+            updated_category_ids = post.get('categories', [])
+            
+            result = f"✅ カテゴリーを更新しました\n\n"
+            result += f"📝 投稿: {title}\n"
+            result += f"🆔 投稿ID: {投稿ID}\n\n"
+            result += f"設定されたカテゴリー:\n"
+            
+            if updated_category_ids:
+                # カテゴリーの詳細情報を取得
+                for cat_id in updated_category_ids:
+                    cat_response = await client.get(
+                        f"{WP_SITE_URL}/wp-json/wp/v2/categories/{cat_id}",
+                        headers=headers,
+                        timeout=30.0
+                    )
+                    if cat_response.status_code == 200:
+                        cat = cat_response.json()
+                        result += f"  • ID: {cat.get('id')} | 名前: {cat.get('name')}\n"
+                    else:
+                        result += f"  • ID: {cat_id} (詳細取得失敗)\n"
+            else:
+                result += "  （カテゴリーが設定されていません）\n"
+            
+            return result
+        
+        except Exception as e:
+            logger.exception(f"Error in post_update_post_categories: {e}")
+            return f"エラーが発生しました: {str(e)}"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
